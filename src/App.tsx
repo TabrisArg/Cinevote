@@ -21,14 +21,17 @@ import {
   Lock,
   LogOut,
   Sliders,
-  Tv
+  Tv,
+  AlertTriangle,
+  Clock
 } from "lucide-react";
 import { db, auth, googleProvider } from "./firebase";
-import { signInWithPopup, signOut, User } from "firebase/auth";
+import { signInWithPopup, signInWithRedirect, getRedirectResult, signOut, User } from "firebase/auth";
 import { 
   collection, 
   doc, 
   addDoc, 
+  setDoc,
   deleteDoc, 
   updateDoc, 
   onSnapshot, 
@@ -42,6 +45,7 @@ import {
 } from "firebase/firestore";
 import { VotingList, MovieSuggestion, Argument } from "./types";
 import { getOrCreateSessionId, getOrCreateAlias, saveAlias } from "./utils/names";
+import { fetchMoviesFromTMDB } from "./movieService";
 
 export default function App() {
   // Navigation & Routing State
@@ -73,6 +77,9 @@ export default function App() {
   // Room Detail State
   const [activeList, setActiveList] = useState<VotingList | null>(null);
   const [movieSuggestions, setMovieSuggestions] = useState<MovieSuggestion[]>([]);
+  const [watchedMovies, setWatchedMovies] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<"active" | "watched">("active");
+  const [timeLeft, setTimeLeft] = useState<{ hours: number; minutes: number; seconds: number; isFrozen: boolean; isOver: boolean } | null>(null);
   const [loadingActiveList, setLoadingActiveList] = useState(false);
 
   // Movie Search State (Suggestion Form)
@@ -87,11 +94,13 @@ export default function App() {
 
   // Movie Editing State
   const [editingMovieId, setEditingMovieId] = useState<string | null>(null);
+  const [isEditingWatched, setIsEditingWatched] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editYear, setEditYear] = useState("");
   const [editDirector, setEditDirector] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editGenresText, setEditGenresText] = useState("");
+  const [countdownInput, setCountdownInput] = useState("");
 
   // UI Notification Toasts
   const [copiedNotification, setCopiedNotification] = useState(false);
@@ -111,6 +120,17 @@ export default function App() {
       setUser(firebaseUser);
       setAuthLoading(false);
     });
+
+    // Capture redirect sign-in result (important fallback for Netlify COOP issues)
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          console.log("Redirect login successful:", result.user.displayName);
+        }
+      })
+      .catch((err) => {
+        console.warn("Redirect login resolution error (or none pending):", err);
+      });
 
     // Hash routing
     const handleHashChange = () => {
@@ -178,9 +198,15 @@ export default function App() {
           setRecentListsData((prev) => {
             const listObj = { id: docSnapshot.id, ...docSnapshot.data() } as VotingList;
             const filtered = prev.filter((item) => item.id !== id);
-            return [...filtered, listObj].sort((a, b) => b.createdAt?.seconds - a.createdAt?.seconds);
+            return [...filtered, listObj].sort((a, b) => {
+              const timeA = a.createdAt?.seconds || (a.createdAt as any)?.seconds || 0;
+              const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
+              return timeB - timeA;
+            });
           });
         }
+      }, (error) => {
+        console.warn(`Error listening to recent list ${id}:`, error);
       });
     });
 
@@ -194,6 +220,7 @@ export default function App() {
     if (currentRoute.path !== "list" || !currentRoute.listId) {
       setActiveList(null);
       setMovieSuggestions([]);
+      setWatchedMovies([]);
       return;
     }
 
@@ -238,13 +265,115 @@ export default function App() {
       console.error("Error listening to movies:", err);
     });
 
+    // 3. Listen to Watched movies inside list
+    const watchedQuery = query(
+      collection(db, "lists", listId, "watched"),
+      orderBy("watchedAt", "desc")
+    );
+
+    const unsubWatched = onSnapshot(watchedQuery, (snapshot) => {
+      const watched: any[] = [];
+      snapshot.forEach((doc) => {
+        watched.push({ id: doc.id, ...doc.data() });
+      });
+      setWatchedMovies(watched);
+    }, (err) => {
+      console.error("Error listening to watched movies:", err);
+    });
+
     return () => {
       unsubList();
       unsubMovies();
+      unsubWatched();
     };
   }, [currentRoute.path, currentRoute.listId]);
 
-  // Debounced Movie Search API query
+  // Helper to trigger the transition once countdown expires
+  const triggerReleaseTransition = async () => {
+    if (!activeList || !activeList.releaseTime || movieSuggestions.length === 0) return;
+    
+    const listId = activeList.id;
+
+    try {
+      // Find the movie with the highest votes
+      const sorted = [...movieSuggestions].sort((a, b) => {
+        const votesA = a.voterIds?.length || 0;
+        const votesB = b.voterIds?.length || 0;
+        if (votesB !== votesA) return votesB - votesA;
+        // Tie-breaker: older suggestion first
+        const timeA = a.createdAt?.seconds || 0;
+        const timeB = b.createdAt?.seconds || 0;
+        return timeA - timeB;
+      });
+
+      const topMovie = sorted[0];
+      if (!topMovie) return;
+
+      // 1. Instantly update list document to clear releaseTime so no double triggers happen
+      const listRef = doc(db, "lists", listId);
+      await updateDoc(listRef, {
+        releaseTime: null,
+        lastReleasedMovieId: topMovie.id
+      });
+
+      // 2. Add to watched collection
+      const watchedRef = doc(db, "lists", listId, "watched", topMovie.id);
+      await setDoc(watchedRef, {
+        title: topMovie.title,
+        year: topMovie.year,
+        description: topMovie.description,
+        poster: topMovie.poster,
+        director: topMovie.director || "",
+        genres: topMovie.genres || [],
+        trailerUrl: topMovie.trailerUrl || "",
+        suggestedBy: topMovie.suggestedBy,
+        suggestedById: topMovie.suggestedById,
+        voterIds: topMovie.voterIds || [],
+        watchedAt: serverTimestamp(),
+        originalMovieId: topMovie.id
+      });
+
+      // 3. Delete from active movies
+      const movieRef = doc(db, "lists", listId, "movies", topMovie.id);
+      await deleteDoc(movieRef);
+
+      console.log("Release transition successful for top movie:", topMovie.title);
+    } catch (err) {
+      console.error("Error during release transition:", err);
+    }
+  };
+
+  // Live countdown ticker
+  useEffect(() => {
+    if (!activeList?.releaseTime) {
+      setTimeLeft(null);
+      return;
+    }
+
+    const checkTime = () => {
+      const deadline = new Date(activeList.releaseTime!).getTime();
+      const now = Date.now();
+      const difference = deadline - now;
+
+      if (difference <= 0) {
+        setTimeLeft({ hours: 0, minutes: 0, seconds: 0, isFrozen: true, isOver: true });
+        triggerReleaseTransition();
+      } else {
+        const totalHours = Math.floor(difference / (1000 * 60 * 60));
+        const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+        const isFrozen = difference <= 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+        setTimeLeft({ hours: totalHours, minutes, seconds, isFrozen, isOver: false });
+      }
+    };
+
+    checkTime();
+    const interval = setInterval(checkTime, 1000);
+
+    return () => clearInterval(interval);
+  }, [activeList?.releaseTime, movieSuggestions, activeList]);
+
+  // Debounced Movie Search API query with browser-to-TMDB fallback for static hosting deployments
   useEffect(() => {
     if (movieQuery.trim().length < 2) {
       setMovieResults([]);
@@ -253,14 +382,46 @@ export default function App() {
 
     const delayDebounceFn = setTimeout(async () => {
       setSearchingMovies(true);
+      
+      // Determine if there is an Express backend based on current hosting context
+      const isCloudRun = window.location.hostname.endsWith(".run.app");
+      const isLocalhostBackend = window.location.hostname === "localhost" && window.location.port === "3000";
+      const hasBackend = isCloudRun || isLocalhostBackend;
+
+      if (!hasBackend) {
+        // Direct browser TMDB search bypasses /api requests on static hosts (like Netlify) to avoid 404s
+        try {
+          const data = await fetchMoviesFromTMDB(movieQuery);
+          setMovieResults(data);
+        } catch (err) {
+          console.error("Direct TMDB API fallback search failed:", err);
+          setMovieResults([]);
+        } finally {
+          setSearchingMovies(false);
+        }
+        return;
+      }
+
       try {
         const response = await fetch(`/api/movies/search?q=${encodeURIComponent(movieQuery)}`);
-        if (response.ok) {
+        const contentType = response.headers.get("content-type");
+        if (response.ok && contentType && contentType.includes("application/json")) {
           const data = await response.json();
           setMovieResults(Array.isArray(data) ? data : []);
+        } else {
+          // If response not ok or not json (like Netlify's /* redirect), fall back to client-side TMDB call
+          const data = await fetchMoviesFromTMDB(movieQuery);
+          setMovieResults(data);
         }
       } catch (err) {
-        console.error("Error searching movies:", err);
+        console.warn("Express API failed, falling back to direct TMDB API browser search:", err);
+        try {
+          const data = await fetchMoviesFromTMDB(movieQuery);
+          setMovieResults(data);
+        } catch (fallbackErr) {
+          console.error("Direct TMDB API fallback search also failed:", fallbackErr);
+          setMovieResults([]);
+        }
       } finally {
         setSearchingMovies(false);
       }
@@ -273,18 +434,25 @@ export default function App() {
   const handleGoogleLogin = async () => {
     try {
       setAuthLoading(true);
+      setErrorMessage(null);
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
-      console.error("Google Login failed:", err);
-      if (err.code === "auth/unauthorized-domain") {
-        const currentHost = window.location.hostname;
-        setErrorMessage(
-          `Google Sign-In is blocked because this domain (${currentHost}) is not authorized. ` +
-          `To fix this: Go to Firebase Console -> Authentication -> Settings -> Authorized domains, ` +
-          `and add "${currentHost}" to the list of authorized domains.`
-        );
-      } else {
-        setErrorMessage(`Could not sign in with Google: ${err.message || "Please try again."}`);
+      console.warn("signInWithPopup failed, trying redirect sign-in as fallback:", err);
+      // Fallback automatically to signInWithRedirect for strict COOP environments (e.g. Netlify/iframes)
+      try {
+        await signInWithRedirect(auth, googleProvider);
+      } catch (redirectErr: any) {
+        console.error("Redirect login failed as well:", redirectErr);
+        if (redirectErr.code === "auth/unauthorized-domain") {
+          const currentHost = window.location.hostname;
+          setErrorMessage(
+            `Google Sign-In is blocked because this domain (${currentHost}) is not authorized. ` +
+            `To fix this: Go to Firebase Console -> Authentication -> Settings -> Authorized domains, ` +
+            `and add "${currentHost}" to the list of authorized domains.`
+          );
+        } else {
+          setErrorMessage(`Could not sign in with Google: ${redirectErr.message || "Please try again."}`);
+        }
       }
     } finally {
       setAuthLoading(false);
@@ -336,6 +504,21 @@ export default function App() {
   // Add Suggestion Operation
   const handleAddMovieSuggestion = async () => {
     if (!selectedMovie || !currentRoute.listId) return;
+
+    if (timeLeft?.isFrozen) {
+      setErrorMessage("Suggesting movies is closed because voting is frozen!");
+      return;
+    }
+
+    // Check if the selected movie is already in the watched list
+    const isAlreadyWatched = watchedMovies.some(
+      (m) => m.title.trim().toLowerCase() === selectedMovie.title.trim().toLowerCase() &&
+             String(m.year) === String(selectedMovie.year)
+    );
+    if (isAlreadyWatched) {
+      setErrorMessage(`"${selectedMovie.title}" is already in the watched list for this room and cannot be suggested again!`);
+      return;
+    }
 
     try {
       const voterId = user?.uid || sessionId;
@@ -404,6 +587,118 @@ export default function App() {
     }
   };
 
+  // Admin Action: Log a movie directly to Watched History
+  const handleLogMovieAsWatched = async () => {
+    if (!selectedMovie || !currentRoute.listId) return;
+
+    try {
+      const listId = currentRoute.listId;
+      const watchedRef = collection(db, "lists", listId, "watched");
+      
+      await addDoc(watchedRef, {
+        title: selectedMovie.title,
+        year: selectedMovie.year,
+        description: selectedMovie.description,
+        poster: selectedMovie.poster,
+        director: selectedMovie.director || "",
+        genres: selectedMovie.genres || [],
+        trailerUrl: selectedMovie.trailerUrl || "",
+        suggestedBy: user?.displayName || "Admin",
+        suggestedById: user?.uid || sessionId,
+        voterIds: [],
+        watchedAt: serverTimestamp()
+      });
+
+      // Reset
+      setSelectedMovie(null);
+      setMovieQuery("");
+      setMovieResults([]);
+    } catch (err) {
+      console.error("Failed to log movie as watched:", err);
+      setErrorMessage("Could not log the movie to watched history.");
+    }
+  };
+
+  // Admin Action: Update watched movie details
+  const handleUpdateWatchedMovie = async (movieId: string) => {
+    if (!currentRoute.listId || !editTitle.trim()) return;
+
+    try {
+      const movieRef = doc(db, "lists", currentRoute.listId, "watched", movieId);
+      const parsedGenres = editGenresText
+        .split(",")
+        .map((g) => g.trim())
+        .filter(Boolean);
+
+      await updateDoc(movieRef, {
+        title: editTitle.trim(),
+        year: editYear.trim(),
+        director: editDirector.trim(),
+        description: editDescription.trim(),
+        genres: parsedGenres
+      });
+
+      setEditingMovieId(null);
+      setIsEditingWatched(false);
+    } catch (err) {
+      console.error("Failed to update watched movie:", err);
+      setErrorMessage("Could not update the watched movie details.");
+    }
+  };
+
+  // Admin Action: Delete a movie from Watched History
+  const handleDeleteWatchedMovie = async (movieId: string) => {
+    if (!currentRoute.listId) return;
+    if (!window.confirm("Are you sure you want to remove this movie from the watched history?")) return;
+
+    try {
+      const movieRef = doc(db, "lists", currentRoute.listId, "watched", movieId);
+      await deleteDoc(movieRef);
+    } catch (err) {
+      console.error("Failed to delete watched movie:", err);
+      setErrorMessage("Could not remove the movie from watched history.");
+    }
+  };
+
+  // Admin Action: Set Release Countdown
+  const handleSetReleaseCountdown = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!currentRoute.listId || !countdownInput) return;
+
+    const selectedTime = new Date(countdownInput).getTime();
+    if (selectedTime <= Date.now()) {
+      setErrorMessage("Release time must be in the future!");
+      return;
+    }
+
+    try {
+      const listRef = doc(db, "lists", currentRoute.listId);
+      await updateDoc(listRef, {
+        releaseTime: new Date(countdownInput).toISOString()
+      });
+      setCountdownInput("");
+    } catch (err) {
+      console.error("Failed to set release countdown:", err);
+      setErrorMessage("Could not schedule the release countdown.");
+    }
+  };
+
+  // Admin Action: Cancel Release Countdown
+  const handleCancelReleaseCountdown = async () => {
+    if (!currentRoute.listId) return;
+    if (!window.confirm("Are you sure you want to cancel the scheduled release countdown? This will unfreeze voting.")) return;
+
+    try {
+      const listRef = doc(db, "lists", currentRoute.listId);
+      await updateDoc(listRef, {
+        releaseTime: null
+      });
+    } catch (err) {
+      console.error("Failed to cancel release countdown:", err);
+      setErrorMessage("Could not cancel the release countdown.");
+    }
+  };
+
   // Deleting List Room (only accessible if logged in user matches the creator)
   const handleDeleteListRoom = async (listId: string) => {
     if (!window.confirm("Are you sure you want to permanently delete this discussion and voting room?")) return;
@@ -427,6 +722,12 @@ export default function App() {
   // Suggestion Actions (Vote, Pros & Cons Argument)
   const handleToggleVote = async (movie: MovieSuggestion) => {
     if (!currentRoute.listId) return;
+
+    if (timeLeft?.isFrozen) {
+      setErrorMessage("Voting is frozen because the release countdown is less than 24 hours away!");
+      return;
+    }
+
     const voterId = user?.uid || sessionId;
     const hasVoted = movie.voterIds?.includes(voterId);
 
@@ -560,6 +861,8 @@ export default function App() {
     const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
     return timeB - timeA;
   });
+
+  const isAdminOfRoom = !!(activeList && user && activeList.creatorId === user.uid);
 
   return (
     <div id="cinevote_app" className="min-h-screen bg-slate-50 text-slate-800 flex flex-col antialiased">
@@ -979,6 +1282,108 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* LIVE TIMER CARD */}
+                  {activeList.releaseTime && timeLeft && (
+                    <div className={`border p-6 rounded-2xl shadow-xs relative overflow-hidden transition-all ${
+                      timeLeft.isFrozen 
+                        ? "bg-amber-50/50 border-amber-200 ring-1 ring-amber-300/30" 
+                        : "bg-sky-50/30 border-sky-100"
+                    }`}>
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {timeLeft.isFrozen ? (
+                              <span className="inline-flex items-center gap-1 bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse shadow-xs">
+                                <Lock className="w-3 h-3 stroke-[3]" />
+                                Voting Frozen
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 bg-sky-600 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-xs">
+                                <Clock className="w-3 h-3 stroke-[3]" />
+                                Countdown Active
+                              </span>
+                            )}
+                            <span className="text-xs text-slate-500 font-semibold">
+                              Release scheduled for: <strong className="text-slate-800 font-bold">{new Date(activeList.releaseTime).toLocaleString()}</strong>
+                            </span>
+                          </div>
+
+                          <h3 className="font-extrabold text-slate-900 text-base leading-snug">
+                            {timeLeft.isFrozen 
+                              ? "The voting has been frozen! The final movie selection is highlighted in Gold below." 
+                              : "Voting freezes 24 hours before the scheduled release deadline."}
+                          </h3>
+                        </div>
+
+                        {/* TIMER NUMBERS */}
+                        <div className="flex items-center gap-4 shrink-0">
+                          <div className="flex gap-2">
+                            <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-xs">
+                              <span className="block font-mono font-black text-slate-900 text-xl tracking-tight">
+                                {String(timeLeft.hours).padStart(2, '0')}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Hrs</span>
+                            </div>
+                            <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-xs">
+                              <span className="block font-mono font-black text-slate-900 text-xl tracking-tight">
+                                {String(timeLeft.minutes).padStart(2, '0')}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Min</span>
+                            </div>
+                            <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-xs">
+                              <span className="block font-mono font-black text-slate-900 text-xl tracking-tight">
+                                {String(timeLeft.seconds).padStart(2, '0')}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Sec</span>
+                            </div>
+                          </div>
+
+                          {isAdminOfRoom && (
+                            <button
+                              onClick={handleCancelReleaseCountdown}
+                              className="bg-white hover:bg-rose-50 hover:text-rose-600 text-slate-600 border border-slate-200 font-extrabold px-3 py-2 rounded-xl text-xs transition-all shadow-xs"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ADMIN COUNTDOWN SCHEDULER PANEL */}
+                  {!activeList.releaseTime && isAdminOfRoom && (
+                    <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-xs space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-sky-600" />
+                            Schedule a Release Countdown
+                          </h4>
+                          <p className="text-xs text-slate-500 font-medium">
+                            Schedule a release date & time. Voting will freeze 24 hours before the deadline, and the top movie will automatically move to the Watched History list.
+                          </p>
+                        </div>
+                      </div>
+                      <form onSubmit={handleSetReleaseCountdown} className="flex flex-wrap items-center gap-3 pt-1">
+                        <input
+                          type="datetime-local"
+                          required
+                          value={countdownInput}
+                          onChange={(e) => setCountdownInput(e.target.value)}
+                          className="bg-slate-50 text-slate-900 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-sky-500 font-semibold"
+                        />
+                        <button
+                          type="submit"
+                          className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs transition-all shadow-xs active:scale-95"
+                        >
+                          Start Countdown
+                        </button>
+                      </form>
+                    </div>
+                  )}
+
                   {/* ROOM MAIN TWO-COLUMN SPLIT */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                     {/* LEFT PANEL: Propose a Movie Suggestion (Floating Sticky style) */}
@@ -1098,21 +1503,72 @@ export default function App() {
                             <p className="text-[11px] text-slate-600 leading-relaxed italic border-t border-slate-200/60 pt-2 font-medium">
                               "{selectedMovie.description}"
                             </p>
-                            <div className="flex gap-2 border-t border-slate-200/60 pt-3">
-                              <button
-                                onClick={handleAddMovieSuggestion}
-                                className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-extrabold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md"
-                              >
-                                Propose Selection
-                                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                              </button>
-                              <button
-                                onClick={() => setSelectedMovie(null)}
-                                className="bg-slate-200 hover:bg-slate-300 text-slate-750 font-bold px-3 py-2 rounded-lg text-xs transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
+                            
+                            {(() => {
+                              const isAlreadyWatched = watchedMovies.some(
+                                (m) => m.title.trim().toLowerCase() === selectedMovie.title.trim().toLowerCase() &&
+                                       String(m.year) === String(selectedMovie.year)
+                              );
+                              return (
+                                <>
+                                  {isAlreadyWatched && (
+                                    <div className="bg-rose-50 border border-rose-200 text-rose-700 p-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 mt-2">
+                                      <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                      <span>This movie has already been watched in this room and is blocked.</span>
+                                    </div>
+                                  )}
+                                  
+                                  <div className="flex flex-col gap-2 border-t border-slate-200/60 pt-3">
+                                    {isAdminOfRoom ? (
+                                      <div className="flex flex-col gap-2 w-full">
+                                        <div className="flex gap-2 w-full">
+                                          <button
+                                            onClick={handleAddMovieSuggestion}
+                                            disabled={isAlreadyWatched || !!timeLeft?.isFrozen}
+                                            className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-extrabold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title={timeLeft?.isFrozen ? "Voting is frozen" : isAlreadyWatched ? "Already watched" : "Propose to watchlist"}
+                                          >
+                                            Propose
+                                            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                          </button>
+                                          <button
+                                            onClick={handleLogMovieAsWatched}
+                                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md"
+                                            title="Directly add to watched history"
+                                          >
+                                            Log Watched
+                                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                          </button>
+                                        </div>
+                                        <button
+                                          onClick={() => setSelectedMovie(null)}
+                                          className="w-full bg-slate-200 hover:bg-slate-300 text-slate-750 font-bold py-2 rounded-lg text-xs transition-colors"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="flex gap-2 w-full">
+                                        <button
+                                          onClick={handleAddMovieSuggestion}
+                                          disabled={isAlreadyWatched || !!timeLeft?.isFrozen}
+                                          className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-extrabold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                          Propose Selection
+                                          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                        </button>
+                                        <button
+                                          onClick={() => setSelectedMovie(null)}
+                                          className="bg-slate-200 hover:bg-slate-300 text-slate-750 font-bold px-3 py-2 rounded-lg text-xs transition-colors"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </motion.div>
                         )}
                       </div>
@@ -1120,349 +1576,596 @@ export default function App() {
 
                     {/* RIGHT PANEL: Dynamic Collaborative Suggestions and Debates */}
                     <div className="lg:col-span-8 space-y-6">
-                      <div className="flex items-center justify-between">
-                        <h2 className="font-extrabold text-slate-900 text-lg flex items-center gap-2">
-                          <Vote className="w-5 h-5 text-sky-600" />
-                          Ranked Movie Candidates ({movieSuggestions.length})
-                        </h2>
-                        <span className="text-[10px] bg-white border border-slate-200 text-slate-500 font-bold px-2.5 py-1 rounded-full uppercase tracking-wider shadow-xs">
-                          Real-time Sorting
+                      {/* TABS SELECTOR */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-4 gap-4">
+                        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
+                          <button
+                            onClick={() => {
+                              setActiveTab("active");
+                              setEditingMovieId(null);
+                            }}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                              activeTab === "active"
+                                ? "bg-white text-slate-900 shadow-xs"
+                                : "text-slate-500 hover:text-slate-900"
+                            }`}
+                          >
+                            <Vote className="w-4 h-4 text-sky-600" />
+                            Active Nominees ({movieSuggestions.length})
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveTab("watched");
+                              setEditingMovieId(null);
+                            }}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                              activeTab === "watched"
+                                ? "bg-white text-slate-900 shadow-xs"
+                                : "text-slate-500 hover:text-slate-900"
+                            }`}
+                          >
+                            <Check className="w-4 h-4 text-emerald-600" />
+                            Watched History ({watchedMovies.length})
+                          </button>
+                        </div>
+                        <span className="text-[10px] bg-white border border-slate-200 text-slate-500 font-bold px-2.5 py-1 rounded-full uppercase tracking-wider shadow-xs self-start sm:self-auto">
+                          Real-time Sync
                         </span>
                       </div>
 
-                      {movieSuggestions.length === 0 ? (
-                        <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 p-8 space-y-3 shadow-xs">
-                          <Film className="w-10 h-10 text-slate-400 mx-auto" />
-                          <h4 className="font-extrabold text-slate-800 text-sm">No Suggestions Yet</h4>
-                          <p className="text-slate-500 text-xs max-w-sm mx-auto font-medium">
-                            Be the first to search and add a movie recommendation to get the discussion rolling!
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-6">
-                          <AnimatePresence>
-                            {sortedMovieSuggestions.map((movie, index) => {
-                              const voterId = user?.uid || sessionId;
-                              const hasVoted = movie.voterIds?.includes(voterId);
-                              const isOwner = movie.suggestedById === (user?.uid || sessionId) || activeList.creatorId === user?.uid;
+                      {activeTab === "active" ? (
+                        /* ACTIVE NOMINEES VIEW */
+                        movieSuggestions.length === 0 ? (
+                          <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 p-8 space-y-3 shadow-xs">
+                            <Film className="w-10 h-10 text-slate-400 mx-auto" />
+                            <h4 className="font-extrabold text-slate-800 text-sm">No Suggestions Yet</h4>
+                            <p className="text-slate-500 text-xs max-w-sm mx-auto font-medium">
+                              Be the first to search and add a movie recommendation to get the discussion rolling!
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-6">
+                            <AnimatePresence>
+                              {sortedMovieSuggestions.map((movie, index) => {
+                                const voterId = user?.uid || sessionId;
+                                const hasVoted = movie.voterIds?.includes(voterId);
+                                const isOwner = movie.suggestedById === (user?.uid || sessionId) || activeList.creatorId === user?.uid;
+                                
+                                const isTopMovie = index === 0;
+                                const isGoldHighlighted = !!(timeLeft?.isFrozen && isTopMovie);
 
-                              return (
-                                <motion.div
-                                  key={movie.id}
-                                  layout
-                                  initial={{ opacity: 0, y: 20 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  exit={{ opacity: 0, scale: 0.95 }}
-                                  className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col"
-                                >
-                                  {/* MOVIE BASIC HEADER DETAILS */}
-                                  <div className="p-5 flex flex-col sm:flex-row gap-5 border-b border-slate-100 bg-slate-50">
-                                    <img
-                                      src={movie.poster}
-                                      alt={movie.title}
-                                      className="w-24 h-36 sm:w-20 sm:h-28 object-cover rounded-xl shadow-md border border-slate-200 bg-white shrink-0 mx-auto sm:mx-0"
-                                      referrerPolicy="no-referrer"
-                                    />
-                                    <div className="space-y-1.5 flex-1 text-center sm:text-left">
-                                      {editingMovieId === movie.id ? (
-                                        <div className="space-y-3 bg-white/40 p-4 rounded-xl border border-slate-200/60 shadow-sm">
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                return (
+                                  <motion.div
+                                    key={movie.id}
+                                    layout
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95 }}
+                                    className={`border rounded-2xl overflow-hidden transition-all flex flex-col relative ${
+                                      isGoldHighlighted 
+                                        ? "border-amber-400 bg-amber-50/10 ring-4 ring-amber-400/20 shadow-md" 
+                                        : "bg-white border-slate-200 shadow-xs hover:shadow-md"
+                                    }`}
+                                  >
+                                    {isGoldHighlighted && (
+                                      <div className="absolute top-3 right-3 bg-gradient-to-r from-amber-500 to-yellow-500 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1 rounded-full shadow-sm flex items-center gap-1 z-10">
+                                        <Sparkles className="w-3.5 h-3.5 animate-pulse text-white" />
+                                        <span>Next Watch Choice</span>
+                                      </div>
+                                    )}
+
+                                    {/* MOVIE BASIC HEADER DETAILS */}
+                                    <div className="p-5 flex flex-col sm:flex-row gap-5 border-b border-slate-100 bg-slate-50">
+                                      <img
+                                        src={movie.poster}
+                                        alt={movie.title}
+                                        className="w-24 h-36 sm:w-20 sm:h-28 object-cover rounded-xl shadow-md border border-slate-200 bg-white shrink-0 mx-auto sm:mx-0"
+                                        referrerPolicy="no-referrer"
+                                      />
+                                      <div className="space-y-1.5 flex-1 text-center sm:text-left">
+                                        {editingMovieId === movie.id ? (
+                                          <div className="space-y-3 bg-white/40 p-4 rounded-xl border border-slate-200/60 shadow-sm">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Movie Title</label>
+                                                <input
+                                                  type="text"
+                                                  value={editTitle}
+                                                  onChange={(e) => setEditTitle(e.target.value)}
+                                                  className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Release Year</label>
+                                                <input
+                                                  type="text"
+                                                  value={editYear}
+                                                  onChange={(e) => setEditYear(e.target.value)}
+                                                  className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
+                                              </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Director</label>
+                                                <input
+                                                  type="text"
+                                                  value={editDirector}
+                                                  onChange={(e) => setEditDirector(e.target.value)}
+                                                  className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Genres (Comma separated)</label>
+                                                <input
+                                                  type="text"
+                                                  value={editGenresText}
+                                                  onChange={(e) => setEditGenresText(e.target.value)}
+                                                  placeholder="e.g. Drama, Sci-Fi"
+                                                  className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
+                                              </div>
+                                            </div>
+
                                             <div>
-                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Movie Title</label>
-                                              <input
-                                                type="text"
-                                                value={editTitle}
-                                                onChange={(e) => setEditTitle(e.target.value)}
-                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Overview / Description</label>
+                                              <textarea
+                                                value={editDescription}
+                                                onChange={(e) => setEditDescription(e.target.value)}
+                                                rows={3}
+                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-medium"
                                               />
                                             </div>
-                                            <div>
-                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Release Year</label>
-                                              <input
-                                                type="text"
-                                                value={editYear}
-                                                onChange={(e) => setEditYear(e.target.value)}
-                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
-                                              />
+
+                                            <div className="flex gap-2 pt-1 justify-end">
+                                              <button
+                                                onClick={() => handleUpdateMovieSuggestion(movie.id)}
+                                                className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold px-3 py-1.5 rounded-lg text-[11px] transition-colors shadow-sm"
+                                              >
+                                                Save Details
+                                              </button>
+                                              <button
+                                                onClick={() => setEditingMovieId(null)}
+                                                className="bg-slate-200 hover:bg-slate-300 text-slate-750 font-bold px-3 py-1.5 rounded-lg text-[11px] transition-colors"
+                                              >
+                                                Cancel
+                                              </button>
                                             </div>
                                           </div>
+                                        ) : (
+                                          <>
+                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                              <div className="space-y-0.5">
+                                                <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
+                                                  <span className="font-mono text-xs text-sky-600 font-extrabold uppercase bg-sky-50 px-2 py-0.5 rounded border border-sky-100">
+                                                    #{index + 1} Candidate
+                                                  </span>
+                                                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                                                    Suggested by: {movie.suggestedBy}
+                                                  </span>
+                                                </div>
+                                                <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">
+                                                  {movie.title} <span className="text-slate-500 font-semibold">({movie.year})</span>
+                                                </h3>
 
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <div>
-                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Director</label>
-                                              <input
-                                                type="text"
-                                                value={editDirector}
-                                                onChange={(e) => setEditDirector(e.target.value)}
-                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
-                                              />
+                                                {/* Director, Genres & Trailer Link */}
+                                                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 pt-1 pb-1 text-[11px] text-slate-500 font-medium">
+                                                  {movie.director && <span>Dir: {movie.director}</span>}
+                                                  {movie.director && movie.genres && movie.genres.length > 0 && <span className="text-slate-300">&bull;</span>}
+                                                  {movie.genres && movie.genres.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1">
+                                                      {movie.genres.map((g: string, idx: number) => (
+                                                        <span key={idx} className="bg-slate-200/60 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                                          {g}
+                                                        </span>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                  <span className="text-slate-300">&bull;</span>
+                                                  <a
+                                                    href={movie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + movie.year + " official trailer")}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-750 font-bold text-xs group"
+                                                  >
+                                                    <Tv className="w-3.5 h-3.5 text-sky-600 group-hover:scale-110 transition-transform" />
+                                                    <span>Watch Trailer</span>
+                                                  </a>
+                                                </div>
+                                              </div>
+
+                                              {/* VOTE TRIGGER BUTTON */}
+                                              <button
+                                                onClick={() => handleToggleVote(movie)}
+                                                className={`sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2 rounded-xl border transition-all shadow-md active:scale-95 ${
+                                                  hasVoted 
+                                                    ? "bg-sky-600 text-white border-sky-500 shadow-sky-500/10" 
+                                                    : "bg-white text-slate-700 border-slate-200 hover:border-sky-500"
+                                                }`}
+                                              >
+                                                <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-white" : "text-sky-600"}`} />
+                                                <span>{movie.voterIds?.length || 0} Votes</span>
+                                              </button>
                                             </div>
-                                            <div>
-                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Genres (Comma separated)</label>
-                                              <input
-                                                type="text"
-                                                value={editGenresText}
-                                                onChange={(e) => setEditGenresText(e.target.value)}
-                                                placeholder="e.g. Drama, Sci-Fi"
-                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
-                                              />
+
+                                            <p className="text-slate-600 text-xs leading-relaxed line-clamp-3 font-medium">
+                                              {movie.description}
+                                            </p>
+
+                                            <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+                                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                                ID: {movie.id}
+                                              </span>
+                                              {isOwner && (
+                                                <div className="flex items-center gap-3">
+                                                  <button
+                                                    onClick={() => {
+                                                      setEditingMovieId(movie.id);
+                                                      setEditTitle(movie.title);
+                                                      setEditYear(movie.year);
+                                                      setEditDirector(movie.director || "");
+                                                      setEditDescription(movie.description || "");
+                                                      setEditGenresText((movie.genres || []).join(", "));
+                                                    }}
+                                                    className="text-slate-400 hover:text-sky-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
+                                                  >
+                                                    <Sliders className="w-3.5 h-3.5" />
+                                                    Edit Movie
+                                                  </button>
+                                                  <span className="text-slate-300">|</span>
+                                                  <button
+                                                    onClick={() => handleDeleteMovieSuggestion(movie.id)}
+                                                    className="text-slate-400 hover:text-rose-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
+                                                  >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                    Remove Movie
+                                                  </button>
+                                                </div>
+                                              )}
                                             </div>
-                                          </div>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
 
-                                          <div>
-                                            <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Overview / Description</label>
-                                            <textarea
-                                              value={editDescription}
-                                              onChange={(e) => setEditDescription(e.target.value)}
-                                              rows={3}
-                                              className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-medium"
-                                            />
-                                          </div>
-
-                                          <div className="flex gap-2 pt-1 justify-end">
-                                            <button
-                                              onClick={() => handleUpdateMovieSuggestion(movie.id)}
-                                              className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold px-3 py-1.5 rounded-lg text-[11px] transition-colors shadow-sm"
-                                            >
-                                              Save Details
-                                            </button>
-                                            <button
-                                              onClick={() => setEditingMovieId(null)}
-                                              className="bg-slate-200 hover:bg-slate-300 text-slate-750 font-bold px-3 py-1.5 rounded-lg text-[11px] transition-colors"
-                                            >
-                                              Cancel
-                                            </button>
-                                          </div>
+                                    {/* PROS & CONS TRICIDER ARGUMENTS VIEW */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100 bg-slate-50/50">
+                                      {/* PROS COLUMN (GREEN) */}
+                                      <div className="p-4 space-y-3">
+                                        <div className="flex items-center gap-1.5 text-emerald-600 font-extrabold text-xs uppercase tracking-wider">
+                                          <Smile className="w-4 h-4" />
+                                          <span>Pros / Arguments In Favor ({movie.pros?.length || 0})</span>
                                         </div>
-                                      ) : (
-                                        <>
-                                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                            <div className="space-y-0.5">
-                                              <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
-                                                <span className="font-mono text-xs text-sky-600 font-extrabold uppercase bg-sky-50 px-2 py-0.5 rounded border border-sky-100">
-                                                  #{index + 1} Candidate
-                                                </span>
-                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-                                                  Suggested by: {movie.suggestedBy}
-                                                </span>
+
+                                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                          {(!movie.pros || movie.pros.length === 0) ? (
+                                            <p className="text-[10px] text-slate-500 italic font-medium">No pro arguments added yet.</p>
+                                          ) : (
+                                            movie.pros.map((pro) => (
+                                              <div key={pro.id} className="bg-emerald-50 border border-emerald-100 p-2.5 rounded-lg space-y-1 relative group">
+                                                <p className="text-slate-700 text-xs leading-relaxed pr-6 font-medium">{pro.text}</p>
+                                                <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                                                  <span>&mdash; {pro.author}</span>
+                                                  {(pro.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
+                                                    <button
+                                                      onClick={() => handleDeleteArgument(movie, pro, "pro")}
+                                                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
+                                                      title="Delete argument"
+                                                    >
+                                                      <Trash2 className="w-3 h-3" />
+                                                    </button>
+                                                  )}
+                                                </div>
                                               </div>
-                                              <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">
-                                                {movie.title} <span className="text-slate-500 font-semibold">({movie.year})</span>
-                                              </h3>
+                                            ))
+                                          )}
+                                        </div>
 
-                                              {/* Director, Genres & Trailer Link */}
-                                              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 pt-1 pb-1 text-[11px] text-slate-500 font-medium">
-                                                {movie.director && <span>Dir: {movie.director}</span>}
-                                                {movie.director && movie.genres && movie.genres.length > 0 && <span className="text-slate-300">&bull;</span>}
-                                                {movie.genres && movie.genres.length > 0 && (
-                                                  <div className="flex flex-wrap gap-1">
-                                                    {movie.genres.map((g: string, idx: number) => (
-                                                      <span key={idx} className="bg-slate-200/60 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">
-                                                        {g}
-                                                      </span>
-                                                    ))}
-                                                  </div>
-                                                )}
-                                                <span className="text-slate-300">&bull;</span>
-                                                <a
-                                                  href={movie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + movie.year + " official trailer")}`}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
-                                                  className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-750 font-bold text-xs group"
-                                                >
-                                                  <Tv className="w-3.5 h-3.5 text-sky-600 group-hover:scale-110 transition-transform" />
-                                                  <span>Watch Trailer</span>
-                                                </a>
-                                              </div>
-                                            </div>
-
-                                            {/* VOTE TRIGGER BUTTON */}
-                                            <button
-                                              onClick={() => handleToggleVote(movie)}
-                                              className={`sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2 rounded-xl border transition-all shadow-md active:scale-95 ${
-                                                hasVoted 
-                                                  ? "bg-sky-600 text-white border-sky-500 shadow-sky-500/10" 
-                                                  : "bg-white text-slate-700 border-slate-200 hover:border-sky-500"
-                                              }`}
-                                            >
-                                              <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-white" : "text-sky-600"}`} />
-                                              <span>{movie.voterIds?.length || 0} Votes</span>
-                                            </button>
-                                          </div>
-
-                                          <p className="text-slate-600 text-xs leading-relaxed line-clamp-3 font-medium">
-                                            {movie.description}
-                                          </p>
-
-                                          <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
-                                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                                              ID: {movie.id}
-                                            </span>
-                                            {isOwner && (
-                                              <div className="flex items-center gap-3">
-                                                <button
-                                                  onClick={() => {
-                                                    setEditingMovieId(movie.id);
-                                                    setEditTitle(movie.title);
-                                                    setEditYear(movie.year);
-                                                    setEditDirector(movie.director || "");
-                                                    setEditDescription(movie.description || "");
-                                                    setEditGenresText((movie.genres || []).join(", "));
-                                                  }}
-                                                  className="text-slate-400 hover:text-sky-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
-                                                >
-                                                  <Sliders className="w-3.5 h-3.5" />
-                                                  Edit Movie
-                                                </button>
-                                                <span className="text-slate-300">|</span>
-                                                <button
-                                                  onClick={() => handleDeleteMovieSuggestion(movie.id)}
-                                                  className="text-slate-400 hover:text-rose-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
-                                                >
-                                                  <Trash2 className="w-3.5 h-3.5" />
-                                                  Remove Movie
-                                                </button>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* PROS & CONS TRICIDER ARGUMENTS VIEW */}
-                                  <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100 bg-slate-50/50">
-                                    {/* PROS COLUMN (GREEN) */}
-                                    <div className="p-4 space-y-3">
-                                      <div className="flex items-center gap-1.5 text-emerald-600 font-extrabold text-xs uppercase tracking-wider">
-                                        <Smile className="w-4 h-4" />
-                                        <span>Pros / Arguments In Favor ({movie.pros?.length || 0})</span>
+                                        {/* Inline Add Pro Form */}
+                                        <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                                          <input
+                                            type="text"
+                                            placeholder="Why suggest this?"
+                                            value={argumentInputs[movie.id]?.type === "pro" ? argumentInputs[movie.id].text : ""}
+                                            onChange={(e) => setArgumentInputs((prev) => ({
+                                              ...prev,
+                                              [movie.id]: { type: "pro", text: e.target.value }
+                                            }))}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") handleAddArgument(movie.id);
+                                            }}
+                                            className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500 placeholder-slate-400 font-medium"
+                                          />
+                                          <button
+                                            onClick={() => {
+                                              // Set type first then add
+                                              setArgumentInputs((prev) => ({
+                                                ...prev,
+                                                [movie.id]: { type: "pro", text: prev[movie.id]?.text || "" }
+                                              }));
+                                              setTimeout(() => handleAddArgument(movie.id), 20);
+                                            }}
+                                            className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 p-2 rounded-lg text-emerald-600 transition-all active:scale-95 shrink-0"
+                                            title="Add pro argument"
+                                          >
+                                            <Plus className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
                                       </div>
 
-                                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                                        {(!movie.pros || movie.pros.length === 0) ? (
-                                          <p className="text-[10px] text-slate-500 italic font-medium">No pro arguments added yet.</p>
-                                        ) : (
-                                          movie.pros.map((pro) => (
-                                            <div key={pro.id} className="bg-emerald-50 border border-emerald-100 p-2.5 rounded-lg space-y-1 relative group">
-                                              <p className="text-slate-700 text-xs leading-relaxed pr-6 font-medium">{pro.text}</p>
-                                              <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold uppercase tracking-wider">
-                                                <span>&mdash; {pro.author}</span>
-                                                {(pro.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
-                                                  <button
-                                                    onClick={() => handleDeleteArgument(movie, pro, "pro")}
-                                                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
-                                                    title="Delete argument"
-                                                  >
-                                                    <Trash2 className="w-3 h-3" />
-                                                  </button>
-                                                )}
+                                      {/* CONS COLUMN (RED) */}
+                                      <div className="p-4 space-y-3">
+                                        <div className="flex items-center gap-1.5 text-rose-600 font-extrabold text-xs uppercase tracking-wider">
+                                          <Frown className="w-4 h-4" />
+                                          <span>Cons / Arguments Against ({movie.cons?.length || 0})</span>
+                                        </div>
+
+                                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                          {(!movie.cons || movie.cons.length === 0) ? (
+                                            <p className="text-[10px] text-slate-500 italic font-medium">No con arguments added yet.</p>
+                                          ) : (
+                                            movie.cons.map((con) => (
+                                              <div key={con.id} className="bg-rose-50 border border-rose-100 p-2.5 rounded-lg space-y-1 relative group">
+                                                <p className="text-slate-700 text-xs leading-relaxed pr-6 font-medium">{con.text}</p>
+                                                <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                                                  <span>&mdash; {con.author}</span>
+                                                  {(con.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
+                                                    <button
+                                                      onClick={() => handleDeleteArgument(movie, con, "con")}
+                                                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
+                                                      title="Delete argument"
+                                                    >
+                                                      <Trash2 className="w-3 h-3" />
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            ))
+                                          )}
+                                        </div>
+
+                                        {/* Inline Add Con Form */}
+                                        <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                                          <input
+                                            type="text"
+                                            placeholder="Any reservations?"
+                                            value={argumentInputs[movie.id]?.type === "con" ? argumentInputs[movie.id].text : ""}
+                                            onChange={(e) => setArgumentInputs((prev) => ({
+                                              ...prev,
+                                              [movie.id]: { type: "con", text: e.target.value }
+                                            }))}
+                                            onKeyDown={(e) => {
+                                              if (e.key === "Enter") handleAddArgument(movie.id);
+                                            }}
+                                            className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-rose-500 placeholder-slate-400 font-medium"
+                                          />
+                                          <button
+                                            onClick={() => {
+                                              // Set type first then add
+                                              setArgumentInputs((prev) => ({
+                                                ...prev,
+                                                [movie.id]: { type: "con", text: prev[movie.id]?.text || "" }
+                                              }));
+                                              setTimeout(() => handleAddArgument(movie.id), 20);
+                                            }}
+                                            className="bg-rose-50 hover:bg-rose-100 border border-rose-200 p-2 rounded-lg text-rose-600 transition-all active:scale-95 shrink-0"
+                                            title="Add con argument"
+                                          >
+                                            <Plus className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </motion.div>
+                                );
+                              })}
+                            </AnimatePresence>
+                          </div>
+                        )
+                      ) : (
+                        /* WATCHED HISTORY VIEW */
+                        watchedMovies.length === 0 ? (
+                          <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-200 p-8 space-y-3 shadow-xs">
+                            <Check className="w-10 h-10 text-emerald-400 mx-auto" />
+                            <h4 className="font-extrabold text-slate-800 text-sm">No Watched Movies Yet</h4>
+                            <p className="text-slate-500 text-xs max-w-sm mx-auto font-medium">
+                              Once a release countdown reaches zero, the highest-voted nominee is automatically marked as watched and logged here!
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-6">
+                            <AnimatePresence>
+                              {watchedMovies.map((movie) => {
+                                const isEditingThisWatched = editingMovieId === movie.id;
+                                return (
+                                  <motion.div
+                                    key={movie.id}
+                                    layout
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95 }}
+                                    className="bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden shadow-xs flex flex-col"
+                                  >
+                                    <div className="p-5 flex flex-col sm:flex-row gap-5">
+                                      <img
+                                        src={movie.poster}
+                                        alt={movie.title}
+                                        className="w-16 h-24 sm:w-20 sm:h-28 object-cover rounded-xl shadow-sm border border-slate-200 bg-white shrink-0 mx-auto sm:mx-0 grayscale-[25%]"
+                                        referrerPolicy="no-referrer"
+                                      />
+                                      <div className="space-y-1.5 flex-1 text-center sm:text-left">
+                                        {isEditingThisWatched ? (
+                                          <div className="space-y-3 bg-white p-4 rounded-xl border border-slate-200/60 shadow-xs">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Movie Title</label>
+                                                <input
+                                                  type="text"
+                                                  value={editTitle}
+                                                  onChange={(e) => setEditTitle(e.target.value)}
+                                                  className="w-full bg-slate-50 text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Release Year</label>
+                                                <input
+                                                  type="text"
+                                                  value={editYear}
+                                                  onChange={(e) => setEditYear(e.target.value)}
+                                                  className="w-full bg-slate-50 text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
                                               </div>
                                             </div>
-                                          ))
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Director</label>
+                                                <input
+                                                  type="text"
+                                                  value={editDirector}
+                                                  onChange={(e) => setEditDirector(e.target.value)}
+                                                  className="w-full bg-slate-50 text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Genres (Comma separated)</label>
+                                                <input
+                                                  type="text"
+                                                  value={editGenresText}
+                                                  onChange={(e) => setEditGenresText(e.target.value)}
+                                                  className="w-full bg-slate-50 text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                                />
+                                              </div>
+                                            </div>
+
+                                            <div>
+                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Overview / Description</label>
+                                              <textarea
+                                                value={editDescription}
+                                                onChange={(e) => setEditDescription(e.target.value)}
+                                                rows={3}
+                                                className="w-full bg-slate-50 text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-medium"
+                                              />
+                                            </div>
+
+                                            <div className="flex gap-2 pt-1 justify-end">
+                                              <button
+                                                onClick={() => handleUpdateWatchedMovie(movie.id)}
+                                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-3 py-1.5 rounded-lg text-[11px] transition-colors shadow-sm"
+                                              >
+                                                Save Watched Details
+                                              </button>
+                                              <button
+                                                onClick={() => {
+                                                  setEditingMovieId(null);
+                                                  setIsEditingWatched(false);
+                                                }}
+                                                className="bg-slate-200 hover:bg-slate-300 text-slate-750 font-bold px-3 py-1.5 rounded-lg text-[11px] transition-colors"
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                              <div>
+                                                <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
+                                                  <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-600 font-black uppercase bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                                    Watched
+                                                  </span>
+                                                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                                                    Originally proposed by: {movie.suggestedBy || "System"}
+                                                  </span>
+                                                </div>
+                                                <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-tight pt-1">
+                                                  {movie.title} <span className="text-slate-500 font-semibold">({movie.year})</span>
+                                                </h3>
+
+                                                {/* Details line */}
+                                                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 pt-1 pb-1 text-[11px] text-slate-500 font-semibold">
+                                                  {movie.director && <span>Dir: {movie.director}</span>}
+                                                  {movie.director && movie.genres && movie.genres.length > 0 && <span className="text-slate-300">&bull;</span>}
+                                                  {movie.genres && movie.genres.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1">
+                                                      {movie.genres.map((g: string, idx: number) => (
+                                                        <span key={idx} className="bg-slate-200/60 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                                          {g}
+                                                        </span>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                  <span className="text-slate-300">&bull;</span>
+                                                  <a
+                                                    href={movie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + movie.year + " official trailer")}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-750 font-bold text-xs group"
+                                                  >
+                                                    <Tv className="w-3.5 h-3.5 text-sky-600 group-hover:scale-110 transition-transform" />
+                                                    <span>Watch Trailer</span>
+                                                  </a>
+                                                </div>
+                                              </div>
+
+                                              {/* WINNING VOTE STATS BADGE */}
+                                              <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-center min-w-[70px] shadow-xs shrink-0 self-center">
+                                                <span className="block font-mono font-black text-slate-900 text-base leading-none">
+                                                  {movie.voterIds?.length || 0}
+                                                </span>
+                                                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Votes</span>
+                                              </div>
+                                            </div>
+
+                                            <p className="text-slate-600 text-xs leading-relaxed line-clamp-3 font-medium">
+                                              {movie.description}
+                                            </p>
+
+                                            <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/50 flex-wrap gap-2">
+                                              <span className="text-[10px] text-slate-400 font-semibold uppercase">
+                                                Watched On: {movie.watchedAt ? new Date((movie.watchedAt.seconds || movie.watchedAt._seconds || movie.watchedAt) * 1000 || movie.watchedAt).toLocaleString() : "Recently"}
+                                              </span>
+                                              
+                                              {isAdminOfRoom && (
+                                                <div className="flex items-center gap-3">
+                                                  <button
+                                                    onClick={() => {
+                                                      setEditingMovieId(movie.id);
+                                                      setIsEditingWatched(true);
+                                                      setEditTitle(movie.title);
+                                                      setEditYear(movie.year);
+                                                      setEditDirector(movie.director || "");
+                                                      setEditDescription(movie.description || "");
+                                                      setEditGenresText((movie.genres || []).join(", "));
+                                                    }}
+                                                    className="text-slate-500 hover:text-sky-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
+                                                  >
+                                                    <Sliders className="w-3.5 h-3.5" />
+                                                    Edit Watched
+                                                  </button>
+                                                  <span className="text-slate-300">|</span>
+                                                  <button
+                                                    onClick={() => handleDeleteWatchedMovie(movie.id)}
+                                                    className="text-slate-500 hover:text-rose-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
+                                                  >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                    Remove Watched
+                                                  </button>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </>
                                         )}
                                       </div>
-
-                                      {/* Inline Add Pro Form */}
-                                      <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
-                                        <input
-                                          type="text"
-                                          placeholder="Why suggest this?"
-                                          value={argumentInputs[movie.id]?.type === "pro" ? argumentInputs[movie.id].text : ""}
-                                          onChange={(e) => setArgumentInputs((prev) => ({
-                                            ...prev,
-                                            [movie.id]: { type: "pro", text: e.target.value }
-                                          }))}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") handleAddArgument(movie.id);
-                                          }}
-                                          className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500 placeholder-slate-400 font-medium"
-                                        />
-                                        <button
-                                          onClick={() => {
-                                            // Set type first then add
-                                            setArgumentInputs((prev) => ({
-                                              ...prev,
-                                              [movie.id]: { type: "pro", text: prev[movie.id]?.text || "" }
-                                            }));
-                                            setTimeout(() => handleAddArgument(movie.id), 20);
-                                          }}
-                                          className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 p-2 rounded-lg text-emerald-600 transition-all active:scale-95 shrink-0"
-                                          title="Add pro argument"
-                                        >
-                                          <Plus className="w-3.5 h-3.5" />
-                                        </button>
-                                      </div>
                                     </div>
-
-                                    {/* CONS COLUMN (RED) */}
-                                    <div className="p-4 space-y-3">
-                                      <div className="flex items-center gap-1.5 text-rose-600 font-extrabold text-xs uppercase tracking-wider">
-                                        <Frown className="w-4 h-4" />
-                                        <span>Cons / Arguments Against ({movie.cons?.length || 0})</span>
-                                      </div>
-
-                                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                                        {(!movie.cons || movie.cons.length === 0) ? (
-                                          <p className="text-[10px] text-slate-500 italic font-medium">No con arguments added yet.</p>
-                                        ) : (
-                                          movie.cons.map((con) => (
-                                            <div key={con.id} className="bg-rose-50 border border-rose-100 p-2.5 rounded-lg space-y-1 relative group">
-                                              <p className="text-slate-700 text-xs leading-relaxed pr-6 font-medium">{con.text}</p>
-                                              <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold uppercase tracking-wider">
-                                                <span>&mdash; {con.author}</span>
-                                                {(con.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
-                                                  <button
-                                                    onClick={() => handleDeleteArgument(movie, con, "con")}
-                                                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
-                                                    title="Delete argument"
-                                                  >
-                                                    <Trash2 className="w-3 h-3" />
-                                                  </button>
-                                                )}
-                                              </div>
-                                            </div>
-                                          ))
-                                        )}
-                                      </div>
-
-                                      {/* Inline Add Con Form */}
-                                      <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
-                                        <input
-                                          type="text"
-                                          placeholder="Any reservations?"
-                                          value={argumentInputs[movie.id]?.type === "con" ? argumentInputs[movie.id].text : ""}
-                                          onChange={(e) => setArgumentInputs((prev) => ({
-                                            ...prev,
-                                            [movie.id]: { type: "con", text: e.target.value }
-                                          }))}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter") handleAddArgument(movie.id);
-                                          }}
-                                          className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-rose-500 placeholder-slate-400 font-medium"
-                                        />
-                                        <button
-                                          onClick={() => {
-                                            // Set type first then add
-                                            setArgumentInputs((prev) => ({
-                                              ...prev,
-                                              [movie.id]: { type: "con", text: prev[movie.id]?.text || "" }
-                                            }));
-                                            setTimeout(() => handleAddArgument(movie.id), 20);
-                                          }}
-                                          className="bg-rose-50 hover:bg-rose-100 border border-rose-200 p-2 rounded-lg text-rose-600 transition-all active:scale-95 shrink-0"
-                                          title="Add con argument"
-                                        >
-                                          <Plus className="w-3.5 h-3.5" />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              );
-                            })}
-                          </AnimatePresence>
-                        </div>
+                                  </motion.div>
+                                );
+                              })}
+                            </AnimatePresence>
+                          </div>
+                        )
                       )}
                     </div>
                   </div>

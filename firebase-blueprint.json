@@ -18,7 +18,7 @@
         },
         "creatorId": {
           "type": "string",
-          "description": "The user ID or session ID of the creator"
+          "description": "The user ID of the creator"
         },
         "creatorName": {
           "type": "string",
@@ -31,6 +31,14 @@
         "createdAt": {
           "type": "object",
           "description": "Firestore server timestamp of creation"
+        },
+        "releaseTime": {
+          "type": "string",
+          "description": "ISO timestamp for scheduled release countdown"
+        },
+        "lastReleasedMovieId": {
+          "type": "string",
+          "description": "ID of the last released movie"
         }
       },
       "required": ["title", "creatorId", "creatorName"]
@@ -109,6 +117,10 @@
     "/lists/{listId}/movies/{movieId}": {
       "schema": "MovieSuggestion",
       "description": "Subcollection of movie recommendations suggested in a room"
+    },
+    "/lists/{listId}/watched/{movieId}": {
+      "schema": "MovieSuggestion",
+      "description": "Subcollection of movies that have been watched after release countdown"
     }
   }
 }

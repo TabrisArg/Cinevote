@@ -1,0 +1,10 @@
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Firebase signInWithPopup requires opening a popup, which is blocked by modern browser strict COOP unless set to same-origin-allow-popups
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
