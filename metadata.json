@@ -1,0 +1,6 @@
+{
+  "name": "Cinevote",
+  "description": "A collaborative movie recommendation and voting platform inspired by Tricider, featuring real-time ranking, movie API search, anonymous participation, and pros/cons debate.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
