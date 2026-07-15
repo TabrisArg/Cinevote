@@ -690,15 +690,6 @@ export default function App() {
             >
               {/* HERO INTRO */}
               <div className="text-center space-y-4 max-w-3xl mx-auto py-6">
-                <motion.div 
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ delay: 0.1 }}
-                  className="inline-flex items-center gap-2 bg-sky-50 border border-sky-200 text-sky-600 font-bold text-xs px-4 py-1.5 rounded-full uppercase tracking-wider mb-2"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Real-time Movie Recommendation & Debate
-                </motion.div>
                 <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-slate-900 leading-none">
                   Make Smarter Movie Choices <br/>
                   <span className="bg-gradient-to-r from-sky-500 via-sky-600 to-sky-700 bg-clip-text text-transparent">Together</span>.
@@ -1491,9 +1482,6 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Film className="w-4 h-4 text-sky-600" />
             <span>Cinevote &copy; 2026. Made for film buffs and cinephiles.</span>
-          </div>
-          <div className="flex gap-4">
-            <span>Powered by Gemini 3.5 &amp; Firebase</span>
           </div>
         </div>
       </footer>
