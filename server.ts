@@ -413,66 +413,78 @@ function getFallbackResults(query: string) {
   return [];
 }
 
-// Movie Search Endpoint - Connects to our robust OMDB movie database
+// Movie Search Endpoint - Connects to our robust TMDB movie database
 app.get("/api/movies/search", async (req, res) => {
   const query = req.query.q as string;
   if (!query || query.trim().length < 2) {
     return res.json([]);
   }
 
-  const apiKey = process.env.OMDB_API_KEY?.trim();
-  if (!apiKey || apiKey === "YOUR_OMDB_API_KEY" || apiKey === "YOUR_API_KEY" || apiKey.length < 3) {
-    console.warn("OMDB_API_KEY is missing or configured with a placeholder. Please set up your OMDB API key in the AI Studio Secrets menu. Falling back to the local database.");
-    const results = getFallbackResults(query);
-    return res.json(results);
-  }
+  const token = (process.env.TMDB_READ_ACCESS_TOKEN?.trim() || "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1OTlkOTkyNWViOTRiNWFkMTAyNTE4OWVkMjNhYjg0NyIsIm5iZiI6MTc4NDEyNjI4Ny41NzQwMDAxLCJzdWIiOiI2YTU3OWI0ZmZiYzZlNGQ5MmNhN2MwN2UiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.qo8vahApLzLVN3cnnO3kWTDqS1YdoVnG96LUz56ewPI").trim();
+  const apiKey = (process.env.TMDB_API_KEY?.trim() || "599d9925eb94b5ad1025189ed23ab847").trim();
 
   try {
-    const searchUrl = `http://www.omdbapi.com/?apikey=${encodeURIComponent(apiKey)}&s=${encodeURIComponent(query)}&type=movie`;
-    const searchRes = await fetch(searchUrl);
+    const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${encodeURIComponent(apiKey)}&query=${encodeURIComponent(query)}&include_adult=false&language=en-US&page=1`;
+    
+    const headers: Record<string, string> = {
+      "accept": "application/json"
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const searchRes = await fetch(searchUrl, { headers });
     
     if (searchRes.status === 401) {
-      console.warn("[Cinevote AI Warning] OMDB API returned 401 (Unauthorized). This means your OMDB_API_KEY is either invalid, expired, or hasn't propagated. Please verify or provide a valid OMDB_API_KEY in the AI Studio Secrets panel. Falling back to standard database.");
+      console.warn("[Cinevote AI Warning] TMDB API returned 401 (Unauthorized). Falling back to standard database.");
       const results = getFallbackResults(query);
       return res.json(results);
     }
 
     if (!searchRes.ok) {
-      throw new Error(`OMDB API Search failed with status: ${searchRes.status}`);
+      throw new Error(`TMDB API Search failed with status: ${searchRes.status}`);
     }
     const searchData: any = await searchRes.json();
 
-    if (searchData.Response === "False" || !searchData.Search || !Array.isArray(searchData.Search)) {
-      console.warn(`OMDB returned no results: ${searchData.Error || "Unknown error"}. Trying local fallback.`);
+    if (!searchData.results || !Array.isArray(searchData.results) || searchData.results.length === 0) {
+      console.warn(`TMDB returned no results. Trying local fallback.`);
       const results = getFallbackResults(query);
       return res.json(results);
     }
 
-    // Get up to 5 best matches and fetch full details for each
-    const candidates = searchData.Search.slice(0, 5);
+    // Get up to 5 best matches and fetch full details (genres, credits, directors) for each
+    const candidates = searchData.results.slice(0, 5);
     const detailedMovies = await Promise.all(
       candidates.map(async (movie: any) => {
         try {
-          const detailUrl = `http://www.omdbapi.com/?apikey=${encodeURIComponent(apiKey)}&i=${encodeURIComponent(movie.imdbID)}&plot=short`;
-          const detailRes = await fetch(detailUrl);
+          const detailUrl = `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${encodeURIComponent(apiKey)}&append_to_response=credits&language=en-US`;
+          const detailRes = await fetch(detailUrl, { headers });
           if (!detailRes.ok) {
             return null;
           }
           const detailData: any = await detailRes.json();
 
-          const title = detailData.Title || movie.Title;
-          const year = detailData.Year || movie.Year;
-          const director = detailData.Director && detailData.Director !== "N/A" ? detailData.Director : "Unknown Director";
-          const description = detailData.Plot && detailData.Plot !== "N/A" ? detailData.Plot : `An interesting movie released in ${year}.`;
+          const title = detailData.title || movie.title || "Untitled Movie";
+          const releaseDate = detailData.release_date || movie.release_date || "";
+          const year = releaseDate ? releaseDate.substring(0, 4) : "N/A";
           
-          // Parse genres
-          let genres = ["Drama"];
-          if (detailData.Genre && detailData.Genre !== "N/A") {
-            genres = detailData.Genre.split(",").map((g: string) => g.trim());
-          }
+          // Extract directors from credits crew
+          const directors = detailData.credits?.crew
+            ? detailData.credits.crew.filter((member: any) => member.job === "Director").map((d: any) => d.name)
+            : [];
+          const director = directors.length > 0 ? directors.join(", ") : "Unknown Director";
+          
+          const description = detailData.overview || movie.overview || `A cinematic production released in ${year}.`;
+          
+          // Extract genres
+          const genres = detailData.genres && Array.isArray(detailData.genres) && detailData.genres.length > 0
+            ? detailData.genres.map((g: any) => g.name)
+            : ["Drama"];
 
-          // Use standard poster or fall back to a nice stock image
-          let poster = detailData.Poster && detailData.Poster !== "N/A" ? detailData.Poster : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&auto=format&fit=crop";
+          // Build TMDB secure image path
+          const poster = detailData.poster_path
+            ? `https://image.tmdb.org/t/p/w500${detailData.poster_path}`
+            : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&auto=format&fit=crop";
 
           return {
             title,
@@ -484,16 +496,19 @@ app.get("/api/movies/search", async (req, res) => {
             trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(title + " " + year + " official trailer")}`
           };
         } catch (detailErr) {
-          console.error(`Failed to fetch details for IMDb ID ${movie.imdbID}:`, detailErr);
-          // Return basic search candidate details if the detail fetch fails
+          console.error(`Failed to fetch TMDB details for Movie ID ${movie.id}:`, detailErr);
+          const releaseDate = movie.release_date || "";
+          const year = releaseDate ? releaseDate.substring(0, 4) : "N/A";
           return {
-            title: movie.Title,
-            year: movie.Year,
-            description: `A movie released in ${movie.Year}.`,
+            title: movie.title || "Untitled Movie",
+            year,
+            description: movie.overview || `A cinematic production released in ${year}.`,
             director: "Unknown Director",
             genres: ["Drama"],
-            poster: movie.Poster && movie.Poster !== "N/A" ? movie.Poster : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&auto=format&fit=crop",
-            trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.Title + " " + movie.Year + " official trailer")}`
+            poster: movie.poster_path
+              ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
+              : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&auto=format&fit=crop",
+            trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + year + " official trailer")}`
           };
         }
       })
@@ -506,7 +521,7 @@ app.get("/api/movies/search", async (req, res) => {
     return res.json(finalMovies);
 
   } catch (err) {
-    console.error("Error fetching from OMDB API, using fallback search:", err);
+    console.error("Error fetching from TMDB API, using fallback search:", err);
     return res.json(getFallbackResults(query));
   }
 });

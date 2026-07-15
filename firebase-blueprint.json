@@ -1,0 +1,114 @@
+{
+  "entities": {
+    "VotingList": {
+      "title": "VotingList",
+      "description": "A collaborative movie discussion and voting room",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "The title of the voting list"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "An optional description of the voting list"
+        },
+        "creatorId": {
+          "type": "string",
+          "description": "The user ID or session ID of the creator"
+        },
+        "creatorName": {
+          "type": "string",
+          "description": "The display name of the creator"
+        },
+        "creatorEmail": {
+          "type": "string",
+          "description": "The optional email of the creator"
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp of creation"
+        }
+      },
+      "required": ["title", "creatorId", "creatorName"]
+    },
+    "MovieSuggestion": {
+      "title": "MovieSuggestion",
+      "description": "A movie suggested by a participant for voting and debating",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150,
+          "description": "The title of the movie"
+        },
+        "year": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Release year of the movie"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Brief description or overview of the movie"
+        },
+        "poster": {
+          "type": "string",
+          "description": "URL of the movie poster image"
+        },
+        "director": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "The director of the movie"
+        },
+        "genres": {
+          "type": "array",
+          "description": "List of movie genres"
+        },
+        "trailerUrl": {
+          "type": "string",
+          "description": "A YouTube search URL or trailer link"
+        },
+        "suggestedBy": {
+          "type": "string",
+          "description": "The display name of the suggesting user"
+        },
+        "suggestedById": {
+          "type": "string",
+          "description": "The user ID or session ID of the suggesting user"
+        },
+        "createdAt": {
+          "type": "object",
+          "description": "Firestore server timestamp of suggestion"
+        },
+        "voterIds": {
+          "type": "array",
+          "description": "User or session IDs of participants who voted for this movie"
+        },
+        "pros": {
+          "type": "array",
+          "description": "List of pro arguments"
+        },
+        "cons": {
+          "type": "array",
+          "description": "List of con arguments"
+        }
+      },
+      "required": ["title", "suggestedBy", "suggestedById"]
+    }
+  },
+  "firestore": {
+    "/lists/{listId}": {
+      "schema": "VotingList",
+      "description": "Collection of collaborative voting rooms"
+    },
+    "/lists/{listId}/movies/{movieId}": {
+      "schema": "MovieSuggestion",
+      "description": "Subcollection of movie recommendations suggested in a room"
+    }
+  }
+}

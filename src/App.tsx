@@ -85,6 +85,14 @@ export default function App() {
   // Argument input map (movieId -> pro/con text)
   const [argumentInputs, setArgumentInputs] = useState<{ [key: string]: { type: "pro" | "con"; text: string } }>({});
 
+  // Movie Editing State
+  const [editingMovieId, setEditingMovieId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editYear, setEditYear] = useState("");
+  const [editDirector, setEditDirector] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editGenresText, setEditGenresText] = useState("");
+
   // UI Notification Toasts
   const [copiedNotification, setCopiedNotification] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -321,6 +329,20 @@ export default function App() {
     if (!selectedMovie || !currentRoute.listId) return;
 
     try {
+      const voterId = user?.uid || sessionId;
+
+      // If they haven't logged in (!user), they can only vote for ONE movie.
+      // Since suggesting a movie automatically self-votes, let's clear their vote from all other movies.
+      if (!user) {
+        const otherMoviesVoted = movieSuggestions.filter((m) => m.voterIds?.includes(voterId));
+        for (const otherMovie of otherMoviesVoted) {
+          const otherMovieRef = doc(db, "lists", currentRoute.listId, "movies", otherMovie.id);
+          await updateDoc(otherMovieRef, {
+            voterIds: arrayRemove(voterId)
+          });
+        }
+      }
+
       await addDoc(collection(db, "lists", currentRoute.listId, "movies"), {
         title: selectedMovie.title,
         year: selectedMovie.year,
@@ -330,9 +352,9 @@ export default function App() {
         genres: selectedMovie.genres || [],
         trailerUrl: selectedMovie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(selectedMovie.title + " " + selectedMovie.year + " official trailer")}`,
         suggestedBy: alias,
-        suggestedById: user?.uid || sessionId,
+        suggestedById: voterId,
         createdAt: serverTimestamp(),
-        voterIds: [user?.uid || sessionId], // Automatic self vote for their own suggestion
+        voterIds: [voterId], // Automatic self vote for their own suggestion
         pros: [],
         cons: []
       });
@@ -344,6 +366,32 @@ export default function App() {
     } catch (err) {
       console.error("Failed to add movie:", err);
       setErrorMessage("Could not add suggestion to the list.");
+    }
+  };
+
+  // Movie Update Operation (Edit Details)
+  const handleUpdateMovieSuggestion = async (movieId: string) => {
+    if (!currentRoute.listId || !editTitle.trim()) return;
+
+    try {
+      const movieRef = doc(db, "lists", currentRoute.listId, "movies", movieId);
+      const parsedGenres = editGenresText
+        .split(",")
+        .map((g) => g.trim())
+        .filter(Boolean);
+
+      await updateDoc(movieRef, {
+        title: editTitle.trim(),
+        year: editYear.trim(),
+        director: editDirector.trim(),
+        description: editDescription.trim(),
+        genres: parsedGenres
+      });
+
+      setEditingMovieId(null);
+    } catch (err) {
+      console.error("Failed to update suggestion:", err);
+      setErrorMessage("Could not update the movie details.");
     }
   };
 
@@ -371,13 +419,35 @@ export default function App() {
   const handleToggleVote = async (movie: MovieSuggestion) => {
     if (!currentRoute.listId) return;
     const voterId = user?.uid || sessionId;
-    const hasVoted = movie.voterIds.includes(voterId);
+    const hasVoted = movie.voterIds?.includes(voterId);
 
     try {
       const movieRef = doc(db, "lists", currentRoute.listId, "movies", movie.id);
-      await updateDoc(movieRef, {
-        voterIds: hasVoted ? arrayRemove(voterId) : arrayUnion(voterId)
-      });
+      
+      if (hasVoted) {
+        // Just remove the vote
+        await updateDoc(movieRef, {
+          voterIds: arrayRemove(voterId)
+        });
+      } else {
+        // If they haven't logged in (!user), enforce they can only vote for ONE movie
+        if (!user) {
+          const otherMoviesVoted = movieSuggestions.filter(
+            (m) => m.id !== movie.id && m.voterIds?.includes(voterId)
+          );
+          for (const otherMovie of otherMoviesVoted) {
+            const otherMovieRef = doc(db, "lists", currentRoute.listId, "movies", otherMovie.id);
+            await updateDoc(otherMovieRef, {
+              voterIds: arrayRemove(voterId)
+            });
+          }
+        }
+
+        // Add vote to the clicked movie
+        await updateDoc(movieRef, {
+          voterIds: arrayUnion(voterId)
+        });
+      }
     } catch (err) {
       console.error("Failed to toggle vote:", err);
     }
@@ -476,8 +546,10 @@ export default function App() {
   const sortedMovieSuggestions = [...movieSuggestions].sort((a, b) => {
     const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
     if (votesDiff !== 0) return votesDiff;
-    // Fallback: newest suggestions first
-    return 0;
+    // Fallback: newest suggestions first (using seconds if available, otherwise 0)
+    const timeA = a.createdAt?.seconds || (a.createdAt as any)?.seconds || 0;
+    const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
+    return timeB - timeA;
   });
 
   return (
@@ -1092,78 +1164,169 @@ export default function App() {
                                       referrerPolicy="no-referrer"
                                     />
                                     <div className="space-y-1.5 flex-1 text-center sm:text-left">
-                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                        <div className="space-y-0.5">
-                                          <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
-                                            <span className="font-mono text-xs text-sky-600 font-extrabold uppercase bg-sky-50 px-2 py-0.5 rounded border border-sky-100">
-                                              #{index + 1} Candidate
-                                            </span>
-                                            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-                                              Suggested by: {movie.suggestedBy}
-                                            </span>
+                                      {editingMovieId === movie.id ? (
+                                        <div className="space-y-3 bg-white/40 p-4 rounded-xl border border-slate-200/60 shadow-sm">
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div>
+                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Movie Title</label>
+                                              <input
+                                                type="text"
+                                                value={editTitle}
+                                                onChange={(e) => setEditTitle(e.target.value)}
+                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Release Year</label>
+                                              <input
+                                                type="text"
+                                                value={editYear}
+                                                onChange={(e) => setEditYear(e.target.value)}
+                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                              />
+                                            </div>
                                           </div>
-                                          <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">
-                                            {movie.title} <span className="text-slate-500 font-semibold">({movie.year})</span>
-                                          </h3>
 
-                                          {/* Director, Genres & Trailer Link */}
-                                          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 pt-1 pb-1 text-[11px] text-slate-500 font-medium">
-                                            {movie.director && <span>Dir: {movie.director}</span>}
-                                            {movie.director && movie.genres && movie.genres.length > 0 && <span className="text-slate-300">&bull;</span>}
-                                            {movie.genres && movie.genres.length > 0 && (
-                                              <div className="flex flex-wrap gap-1">
-                                                {movie.genres.map((g: string, idx: number) => (
-                                                  <span key={idx} className="bg-slate-200/60 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">
-                                                    {g}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            )}
-                                            <span className="text-slate-300">&bull;</span>
-                                            <a
-                                              href={movie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + movie.year + " official trailer")}`}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-750 font-bold text-xs group"
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div>
+                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Director</label>
+                                              <input
+                                                type="text"
+                                                value={editDirector}
+                                                onChange={(e) => setEditDirector(e.target.value)}
+                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Genres (Comma separated)</label>
+                                              <input
+                                                type="text"
+                                                value={editGenresText}
+                                                onChange={(e) => setEditGenresText(e.target.value)}
+                                                placeholder="e.g. Drama, Sci-Fi"
+                                                className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-extrabold"
+                                              />
+                                            </div>
+                                          </div>
+
+                                          <div>
+                                            <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider mb-1">Overview / Description</label>
+                                            <textarea
+                                              value={editDescription}
+                                              onChange={(e) => setEditDescription(e.target.value)}
+                                              rows={3}
+                                              className="w-full bg-white text-slate-900 border border-slate-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-sky-500 font-medium"
+                                            />
+                                          </div>
+
+                                          <div className="flex gap-2 pt-1 justify-end">
+                                            <button
+                                              onClick={() => handleUpdateMovieSuggestion(movie.id)}
+                                              className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold px-3 py-1.5 rounded-lg text-[11px] transition-colors shadow-sm"
                                             >
-                                              <Tv className="w-3.5 h-3.5 text-sky-600 group-hover:scale-110 transition-transform" />
-                                              <span>Watch Trailer</span>
-                                            </a>
+                                              Save Details
+                                            </button>
+                                            <button
+                                              onClick={() => setEditingMovieId(null)}
+                                              className="bg-slate-200 hover:bg-slate-300 text-slate-750 font-bold px-3 py-1.5 rounded-lg text-[11px] transition-colors"
+                                            >
+                                              Cancel
+                                            </button>
                                           </div>
                                         </div>
+                                      ) : (
+                                        <>
+                                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                            <div className="space-y-0.5">
+                                              <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
+                                                <span className="font-mono text-xs text-sky-600 font-extrabold uppercase bg-sky-50 px-2 py-0.5 rounded border border-sky-100">
+                                                  #{index + 1} Candidate
+                                                </span>
+                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                                                  Suggested by: {movie.suggestedBy}
+                                                </span>
+                                              </div>
+                                              <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">
+                                                {movie.title} <span className="text-slate-500 font-semibold">({movie.year})</span>
+                                              </h3>
 
-                                        {/* VOTE TRIGGER BUTTON */}
-                                        <button
-                                          onClick={() => handleToggleVote(movie)}
-                                          className={`sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2 rounded-xl border transition-all shadow-md active:scale-95 ${
-                                            hasVoted 
-                                              ? "bg-sky-600 text-white border-sky-500 shadow-sky-500/10" 
-                                              : "bg-white text-slate-700 border-slate-200 hover:border-sky-500"
-                                          }`}
-                                        >
-                                          <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-white" : "text-sky-600"}`} />
-                                          <span>{movie.voterIds?.length || 0} Votes</span>
-                                        </button>
-                                      </div>
+                                              {/* Director, Genres & Trailer Link */}
+                                              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 pt-1 pb-1 text-[11px] text-slate-500 font-medium">
+                                                {movie.director && <span>Dir: {movie.director}</span>}
+                                                {movie.director && movie.genres && movie.genres.length > 0 && <span className="text-slate-300">&bull;</span>}
+                                                {movie.genres && movie.genres.length > 0 && (
+                                                  <div className="flex flex-wrap gap-1">
+                                                    {movie.genres.map((g: string, idx: number) => (
+                                                      <span key={idx} className="bg-slate-200/60 text-slate-600 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">
+                                                        {g}
+                                                      </span>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                                <span className="text-slate-300">&bull;</span>
+                                                <a
+                                                  href={movie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + movie.year + " official trailer")}`}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  className="inline-flex items-center gap-1 text-sky-600 hover:text-sky-750 font-bold text-xs group"
+                                                >
+                                                  <Tv className="w-3.5 h-3.5 text-sky-600 group-hover:scale-110 transition-transform" />
+                                                  <span>Watch Trailer</span>
+                                                </a>
+                                              </div>
+                                            </div>
 
-                                      <p className="text-slate-600 text-xs leading-relaxed line-clamp-3 font-medium">
-                                        {movie.description}
-                                      </p>
+                                            {/* VOTE TRIGGER BUTTON */}
+                                            <button
+                                              onClick={() => handleToggleVote(movie)}
+                                              className={`sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2 rounded-xl border transition-all shadow-md active:scale-95 ${
+                                                hasVoted 
+                                                  ? "bg-sky-600 text-white border-sky-500 shadow-sky-500/10" 
+                                                  : "bg-white text-slate-700 border-slate-200 hover:border-sky-500"
+                                              }`}
+                                            >
+                                              <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-white" : "text-sky-600"}`} />
+                                              <span>{movie.voterIds?.length || 0} Votes</span>
+                                            </button>
+                                          </div>
 
-                                      <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
-                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                                          ID: {movie.id}
-                                        </span>
-                                        {isOwner && (
-                                          <button
-                                            onClick={() => handleDeleteMovieSuggestion(movie.id)}
-                                            className="text-slate-400 hover:text-rose-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                            Remove Movie
-                                          </button>
-                                        )}
-                                      </div>
+                                          <p className="text-slate-600 text-xs leading-relaxed line-clamp-3 font-medium">
+                                            {movie.description}
+                                          </p>
+
+                                          <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+                                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                              ID: {movie.id}
+                                            </span>
+                                            {isOwner && (
+                                              <div className="flex items-center gap-3">
+                                                <button
+                                                  onClick={() => {
+                                                    setEditingMovieId(movie.id);
+                                                    setEditTitle(movie.title);
+                                                    setEditYear(movie.year);
+                                                    setEditDirector(movie.director || "");
+                                                    setEditDescription(movie.description || "");
+                                                    setEditGenresText((movie.genres || []).join(", "));
+                                                  }}
+                                                  className="text-slate-400 hover:text-sky-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
+                                                >
+                                                  <Sliders className="w-3.5 h-3.5" />
+                                                  Edit Movie
+                                                </button>
+                                                <span className="text-slate-300">|</span>
+                                                <button
+                                                  onClick={() => handleDeleteMovieSuggestion(movie.id)}
+                                                  className="text-slate-400 hover:text-rose-600 transition-colors p-1 flex items-center gap-1 text-[10px] font-extrabold uppercase"
+                                                >
+                                                  <Trash2 className="w-3.5 h-3.5" />
+                                                  Remove Movie
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </>
+                                      )}
                                     </div>
                                   </div>
 
