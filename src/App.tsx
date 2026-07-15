@@ -276,7 +276,16 @@ export default function App() {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.error("Google Login failed:", err);
-      setErrorMessage("Could not sign in with Google. Please try again.");
+      if (err.code === "auth/unauthorized-domain") {
+        const currentHost = window.location.hostname;
+        setErrorMessage(
+          `Google Sign-In is blocked because this domain (${currentHost}) is not authorized. ` +
+          `To fix this: Go to Firebase Console -> Authentication -> Settings -> Authorized domains, ` +
+          `and add "${currentHost}" to the list of authorized domains.`
+        );
+      } else {
+        setErrorMessage(`Could not sign in with Google: ${err.message || "Please try again."}`);
+      }
     } finally {
       setAuthLoading(false);
     }
