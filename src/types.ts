@@ -1,3 +1,10 @@
+export interface RepeatingSchedule {
+  selectedDays: number[]; // 0=Sunday, 1=Monday, etc.
+  frequencyValue: number;
+  frequencyUnit: "weeks" | "months" | "years";
+  startDate: string;
+}
+
 export interface VotingList {
   id: string;
   title: string;
@@ -9,6 +16,7 @@ export interface VotingList {
   releaseTime?: string; // ISO string representing scheduled release countdown
   lastReleasedMovieId?: string;
   rules?: string;
+  repeatingSchedule?: RepeatingSchedule;
 }
 
 export interface Argument {
@@ -17,6 +25,12 @@ export interface Argument {
   author: string;
   authorId: string;
   createdAt: number; // timestamp
+}
+
+export interface VoteHistoryItem {
+  voterId: string;
+  name: string;
+  timestamp: number;
 }
 
 export interface MovieSuggestion {
@@ -30,6 +44,7 @@ export interface MovieSuggestion {
   suggestedById: string;
   createdAt: any; // Firestore Timestamp
   voterIds: string[]; // array of session/user IDs
+  votersHistory?: VoteHistoryItem[];
   pros: Argument[];
   cons: Argument[];
   director?: string;

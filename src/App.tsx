@@ -45,9 +45,10 @@ import {
   arrayRemove,
   getDoc
 } from "firebase/firestore";
-import { VotingList, MovieSuggestion, Argument } from "./types";
+import { VotingList, MovieSuggestion, Argument, RepeatingSchedule } from "./types";
 import { getOrCreateSessionId, getOrCreateAlias, saveAlias } from "./utils/names";
 import { fetchMoviesFromTMDB } from "./movieService";
+import { validateStartDate, calculateUpcomingOccurrences, formatRepeatingSchedule } from "./utils/schedule";
 
 export default function App() {
   // Navigation & Routing State
@@ -91,6 +92,9 @@ export default function App() {
   const [selectedMovie, setSelectedMovie] = useState<any | null>(null);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
 
+  // Voters History Modal State
+  const [viewingVotersMovie, setViewingVotersMovie] = useState<MovieSuggestion | null>(null);
+
   // Argument input map (movieId -> pro/con text)
   const [argumentInputs, setArgumentInputs] = useState<{ [key: string]: { type: "pro" | "con"; text: string } }>({});
 
@@ -103,6 +107,21 @@ export default function App() {
   const [editDescription, setEditDescription] = useState("");
   const [editGenresText, setEditGenresText] = useState("");
   const [countdownInput, setCountdownInput] = useState("");
+
+  // Repeating schedule state
+  const [scheduleType, setScheduleType] = useState<"one-time" | "repeating">("one-time");
+  const [selectedDays, setSelectedDays] = useState<number[]>([]); // 0 = Sunday, 1 = Monday, etc.
+  const [frequencyValue, setFrequencyValue] = useState<number>(1);
+  const [frequencyUnit, setFrequencyUnit] = useState<"weeks" | "months" | "years">("weeks");
+  const [startDateInput, setStartDateInput] = useState<string>("");
+
+  // Universal Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    confirmText: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   // Room Rules State
   const [isEditingRules, setIsEditingRules] = useState(false);
@@ -375,10 +394,25 @@ export default function App() {
       const topMovie = sorted[0];
       if (!topMovie) return;
 
-      // 1. Instantly update list document to clear releaseTime so no double triggers happen
+      // 1. Instantly update list document to clear releaseTime or advance to next scheduled date
       const listRef = doc(db, "lists", listId);
+      let nextReleaseTime: string | null = null;
+
+      if (activeList.repeatingSchedule) {
+        const occurrences = calculateUpcomingOccurrences(activeList.repeatingSchedule, 3);
+        if (occurrences.length > 0) {
+          const currentReleaseMs = new Date(activeList.releaseTime).getTime();
+          const nextDate = occurrences.find(occ => occ.getTime() > currentReleaseMs + 60000) || occurrences[1] || occurrences[0];
+          if (nextDate) {
+            const origTime = new Date(activeList.releaseTime);
+            nextDate.setHours(origTime.getHours(), origTime.getMinutes(), 0, 0);
+            nextReleaseTime = nextDate.toISOString();
+          }
+        }
+      }
+
       await updateDoc(listRef, {
-        releaseTime: null,
+        releaseTime: nextReleaseTime,
         lastReleasedMovieId: topMovie.id
       });
 
@@ -395,6 +429,7 @@ export default function App() {
         suggestedBy: topMovie.suggestedBy,
         suggestedById: topMovie.suggestedById,
         voterIds: topMovie.voterIds || [],
+        votersHistory: topMovie.votersHistory || [],
         watchedAt: serverTimestamp(),
         originalMovieId: topMovie.id
       });
@@ -590,8 +625,10 @@ export default function App() {
         const otherMoviesVoted = movieSuggestions.filter((m) => m.voterIds?.includes(voterId));
         for (const otherMovie of otherMoviesVoted) {
           const otherMovieRef = doc(db, "lists", currentRoute.listId, "movies", otherMovie.id);
+          const otherNewHistory = (otherMovie.votersHistory || []).filter(h => h.voterId !== voterId);
           await updateDoc(otherMovieRef, {
-            voterIds: arrayRemove(voterId)
+            voterIds: arrayRemove(voterId),
+            votersHistory: otherNewHistory
           });
         }
       }
@@ -608,6 +645,13 @@ export default function App() {
         suggestedById: voterId,
         createdAt: serverTimestamp(),
         voterIds: [voterId], // Automatic self vote for their own suggestion
+        votersHistory: [
+          {
+            voterId: voterId,
+            name: alias || "Anonymous Fan",
+            timestamp: Date.now()
+          }
+        ],
         pros: [],
         cons: []
       });
@@ -708,76 +752,147 @@ export default function App() {
   };
 
   // Admin Action: Delete a movie from Watched History
-  const handleDeleteWatchedMovie = async (movieId: string) => {
-    if (!currentRoute.listId) return;
-    if (!window.confirm("Are you sure you want to remove this movie from the watched history?")) return;
+  const handleDeleteWatchedMovie = (movieId: string) => {
+    const listId = currentRoute.listId || activeList?.id;
+    if (!listId) return;
 
-    try {
-      const movieRef = doc(db, "lists", currentRoute.listId, "watched", movieId);
-      await deleteDoc(movieRef);
-    } catch (err) {
-      console.error("Failed to delete watched movie:", err);
-      setErrorMessage("Could not remove the movie from watched history.");
-    }
+    setConfirmModal({
+      title: "Remove from Watched History",
+      message: "Are you sure you want to remove this movie from the watched history?",
+      confirmText: "Remove",
+      onConfirm: async () => {
+        try {
+          const movieRef = doc(db, "lists", listId, "watched", movieId);
+          await deleteDoc(movieRef);
+        } catch (err) {
+          console.error("Failed to delete watched movie:", err);
+          setErrorMessage("Could not remove the movie from watched history.");
+        }
+      }
+    });
   };
 
   // Admin Action: Set Release Countdown
   const handleSetReleaseCountdown = async (e: FormEvent) => {
     e.preventDefault();
-    if (!currentRoute.listId || !countdownInput) return;
+    const listId = currentRoute.listId || activeList?.id;
+    if (!listId) return;
 
-    const selectedTime = new Date(countdownInput).getTime();
-    if (selectedTime <= Date.now()) {
-      setErrorMessage("Release time must be in the future!");
-      return;
-    }
+    if (scheduleType === "repeating") {
+      if (selectedDays.length === 0) {
+        setErrorMessage("Please select at least one day of the week for the repeating schedule!");
+        return;
+      }
+      if (!startDateInput) {
+        setErrorMessage("Please select a starting date and time!");
+        return;
+      }
+      
+      const dateObj = new Date(startDateInput);
+      const dayOfWeek = dateObj.getDay(); // 0 = Sunday, 1 = Monday, etc.
+      
+      if (!selectedDays.includes(dayOfWeek)) {
+        const daysNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        setErrorMessage(`Starting date falls on a ${daysNames[dayOfWeek]}, which is not in your selected repeating days!`);
+        return;
+      }
 
-    try {
-      const listRef = doc(db, "lists", currentRoute.listId);
-      await updateDoc(listRef, {
-        releaseTime: new Date(countdownInput).toISOString()
-      });
-      setCountdownInput("");
-    } catch (err) {
-      console.error("Failed to set release countdown:", err);
-      setErrorMessage("Could not schedule the release countdown.");
+      if (dateObj.getTime() <= Date.now()) {
+        setErrorMessage("Starting date and time must be in the future!");
+        return;
+      }
+
+      try {
+        const listRef = doc(db, "lists", listId);
+        const repeatingObj: RepeatingSchedule = {
+          selectedDays,
+          frequencyValue: Number(frequencyValue),
+          frequencyUnit,
+          startDate: startDateInput
+        };
+        await updateDoc(listRef, {
+          releaseTime: new Date(startDateInput).toISOString(),
+          repeatingSchedule: repeatingObj
+        });
+        
+        // Reset local repeating state
+        setSelectedDays([]);
+        setStartDateInput("");
+        setFrequencyValue(1);
+        setFrequencyUnit("weeks");
+      } catch (err) {
+        console.error("Failed to set repeating schedule:", err);
+        setErrorMessage("Could not schedule the repeating viewing schedule.");
+      }
+    } else {
+      if (!countdownInput) return;
+      const selectedTime = new Date(countdownInput).getTime();
+      if (selectedTime <= Date.now()) {
+        setErrorMessage("Release time must be in the future!");
+        return;
+      }
+
+      try {
+        const listRef = doc(db, "lists", listId);
+        await updateDoc(listRef, {
+          releaseTime: new Date(countdownInput).toISOString(),
+          repeatingSchedule: null
+        });
+        setCountdownInput("");
+      } catch (err) {
+        console.error("Failed to set release countdown:", err);
+        setErrorMessage("Could not schedule the release countdown.");
+      }
     }
   };
 
   // Admin Action: Cancel Release Countdown
-  const handleCancelReleaseCountdown = async () => {
-    if (!currentRoute.listId) return;
-    if (!window.confirm("Are you sure you want to cancel the scheduled release countdown? This will unfreeze voting.")) return;
+  const handleCancelReleaseCountdown = () => {
+    const listId = currentRoute.listId || activeList?.id;
+    if (!listId) return;
 
-    try {
-      const listRef = doc(db, "lists", currentRoute.listId);
-      await updateDoc(listRef, {
-        releaseTime: null
-      });
-    } catch (err) {
-      console.error("Failed to cancel release countdown:", err);
-      setErrorMessage("Could not cancel the release countdown.");
-    }
+    setConfirmModal({
+      title: "Cancel Scheduled Release",
+      message: "Are you sure you want to cancel the scheduled release countdown? This will unfreeze voting and clear any repeating schedules.",
+      confirmText: "Cancel Schedule",
+      onConfirm: async () => {
+        try {
+          const listRef = doc(db, "lists", listId);
+          await updateDoc(listRef, {
+            releaseTime: null,
+            repeatingSchedule: null
+          });
+        } catch (err) {
+          console.error("Failed to cancel release countdown:", err);
+          setErrorMessage("Could not cancel the release countdown.");
+        }
+      }
+    });
   };
 
   // Deleting List Room (only accessible if logged in user matches the creator)
-  const handleDeleteListRoom = async (listId: string) => {
-    if (!window.confirm("Are you sure you want to permanently delete this discussion and voting room?")) return;
-
-    try {
-      await deleteDoc(doc(db, "lists", listId));
-      setRecentListIds((prev) => {
-        const filtered = prev.filter((id) => id !== listId);
-        localStorage.setItem("cinevote_recent_rooms", JSON.stringify(filtered));
-        return filtered;
-      });
-      if (currentRoute.path === "list" && currentRoute.listId === listId) {
-        window.location.hash = "";
+  const handleDeleteListRoom = (listId: string) => {
+    setConfirmModal({
+      title: "Delete Discussion Room",
+      message: "Are you sure you want to permanently delete this discussion and voting room? This action cannot be undone.",
+      confirmText: "Delete Room",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "lists", listId));
+          setRecentListIds((prev) => {
+            const filtered = prev.filter((id) => id !== listId);
+            localStorage.setItem("cinevote_recent_rooms", JSON.stringify(filtered));
+            return filtered;
+          });
+          if (currentRoute.path === "list" && currentRoute.listId === listId) {
+            window.location.hash = "";
+          }
+        } catch (err) {
+          console.error("Failed to delete list room:", err);
+          setErrorMessage("Could not delete this list room.");
+        }
       }
-    } catch (err) {
-      console.error("Failed to delete list room:", err);
-      setErrorMessage("Could not delete list room.");
-    }
+    });
   };
 
   // Admin Action: Save custom rules for the room
@@ -801,8 +916,14 @@ export default function App() {
     try {
       const movieRef = doc(db, "lists", currentRoute.listId, "movies", movie.id);
       const uniqueAdminVoteId = `admin_vote_${Math.random().toString(36).substring(2, 9)}`;
+      const newHistoryItem = {
+        voterId: uniqueAdminVoteId,
+        name: "Admin Boost ⚡",
+        timestamp: Date.now()
+      };
       await updateDoc(movieRef, {
-        voterIds: arrayUnion(uniqueAdminVoteId)
+        voterIds: arrayUnion(uniqueAdminVoteId),
+        votersHistory: arrayUnion(newHistoryItem)
       });
     } catch (err) {
       console.error("Admin add vote error:", err);
@@ -819,8 +940,10 @@ export default function App() {
       const adminVote = movie.voterIds.find(id => id.startsWith("admin_vote_"));
       const voteToRemove = adminVote || movie.voterIds[movie.voterIds.length - 1];
       
+      const newHistory = (movie.votersHistory || []).filter(h => h.voterId !== voteToRemove);
       await updateDoc(movieRef, {
-        voterIds: arrayRemove(voteToRemove)
+        voterIds: arrayRemove(voteToRemove),
+        votersHistory: newHistory
       });
     } catch (err) {
       console.error("Admin remove vote error:", err);
@@ -846,8 +969,10 @@ export default function App() {
       
       if (hasVoted) {
         // Just remove the vote
+        const newHistory = (movie.votersHistory || []).filter(h => h.voterId !== voterId);
         await updateDoc(movieRef, {
-          voterIds: arrayRemove(voterId)
+          voterIds: arrayRemove(voterId),
+          votersHistory: newHistory
         });
       } else {
         // If they haven't logged in (!user), enforce they can only vote for ONE movie
@@ -857,15 +982,23 @@ export default function App() {
           );
           for (const otherMovie of otherMoviesVoted) {
             const otherMovieRef = doc(db, "lists", currentRoute.listId, "movies", otherMovie.id);
+            const otherNewHistory = (otherMovie.votersHistory || []).filter(h => h.voterId !== voterId);
             await updateDoc(otherMovieRef, {
-              voterIds: arrayRemove(voterId)
+              voterIds: arrayRemove(voterId),
+              votersHistory: otherNewHistory
             });
           }
         }
 
         // Add vote to the clicked movie
+        const newHistoryItem = {
+          voterId: voterId,
+          name: alias || "Anonymous Fan",
+          timestamp: Date.now()
+        };
         await updateDoc(movieRef, {
-          voterIds: arrayUnion(voterId)
+          voterIds: arrayUnion(voterId),
+          votersHistory: arrayUnion(newHistoryItem)
         });
       }
     } catch (err) {
@@ -927,14 +1060,22 @@ export default function App() {
     }
   };
 
-  const handleDeleteMovieSuggestion = async (movieId: string) => {
-    if (!currentRoute.listId || !window.confirm("Are you sure you want to remove this movie suggestion?")) return;
+  const handleDeleteMovieSuggestion = (movieId: string) => {
+    const listId = currentRoute.listId || activeList?.id;
+    if (!listId) return;
 
-    try {
-      await deleteDoc(doc(db, "lists", currentRoute.listId, "movies", movieId));
-    } catch (err) {
-      console.error("Failed to delete suggestion:", err);
-    }
+    setConfirmModal({
+      title: "Remove Movie Suggestion",
+      message: "Are you sure you want to remove this movie suggestion?",
+      confirmText: "Remove",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "lists", listId, "movies", movieId));
+        } catch (err) {
+          console.error("Failed to delete suggestion:", err);
+        }
+      }
+    });
   };
 
   // Helper utility to copy room url
@@ -1494,12 +1635,19 @@ export default function App() {
                             ) : (
                               <span className="inline-flex items-center gap-1 bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm">
                                 <Clock className="w-3 h-3 stroke-[3]" />
-                                Countdown Active
+                                {activeList.repeatingSchedule ? "Recurring Schedule Active" : "Countdown Active"}
                               </span>
                             )}
                             <span className="text-xs text-zinc-300 font-semibold">
-                              Scheduled watch time: <strong className="text-amber-400 font-bold">{new Date(activeList.releaseTime).toLocaleString()}</strong>
+                              {activeList.repeatingSchedule ? "Next viewing session: " : "Scheduled watch time: "}
+                              <strong className="text-amber-400 font-bold">{new Date(activeList.releaseTime).toLocaleString()}</strong>
                             </span>
+                            
+                            {activeList.repeatingSchedule && (
+                              <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold font-mono px-2 py-0.5 rounded flex items-center gap-1">
+                                🔄 {formatRepeatingSchedule(activeList.repeatingSchedule)}
+                              </span>
+                            )}
                           </div>
 
                           <h3 className="font-serif font-black text-amber-300 text-base leading-snug uppercase tracking-wider">
@@ -1547,32 +1695,188 @@ export default function App() {
 
                   {/* ADMIN COUNTDOWN SCHEDULER PANEL */}
                   {!activeList.releaseTime && isAdminOfRoom && (
-                    <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-850 pb-3">
                         <div className="space-y-1">
                           <h4 className="font-serif font-black text-amber-400 text-sm flex items-center gap-2 uppercase tracking-wider">
                             <Clock className="w-4 h-4 text-amber-500" />
-                            Schedule a Voting Deadline
+                            Schedule Watch Time
                           </h4>
                           <p className="text-xs text-zinc-300 font-medium font-serif italic">
-                            Schedule the voting deadline date & time. Voting will lock 24 hours before this deadline.
+                            Setup either a one-time voting deadline or a repeating weekly/monthly/yearly schedule.
                           </p>
                         </div>
+
+                        {/* Toggle Tab */}
+                        <div className="flex rounded-xl bg-zinc-950 p-1 border border-zinc-850 self-start sm:self-center">
+                          <button
+                            type="button"
+                            onClick={() => setScheduleType("one-time")}
+                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                              scheduleType === "one-time"
+                                ? "bg-amber-500 text-black shadow-sm"
+                                : "text-zinc-400 hover:text-amber-400"
+                            }`}
+                          >
+                            One-time
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setScheduleType("repeating")}
+                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                              scheduleType === "repeating"
+                                ? "bg-amber-500 text-black shadow-sm"
+                                : "text-zinc-400 hover:text-amber-400"
+                            }`}
+                          >
+                            Repeating Day
+                          </button>
+                        </div>
                       </div>
-                      <form onSubmit={handleSetReleaseCountdown} className="flex flex-wrap items-center gap-3 pt-1">
-                        <input
-                          type="datetime-local"
-                          required
-                          value={countdownInput}
-                          onChange={(e) => setCountdownInput(e.target.value)}
-                          className="bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-semibold"
-                        />
-                        <button
-                          type="submit"
-                          className="bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2 rounded-xl text-xs transition-all shadow-md border border-amber-400"
-                        >
-                          Start Countdown
-                        </button>
+
+                      <form onSubmit={handleSetReleaseCountdown} className="space-y-4">
+                        {scheduleType === "one-time" ? (
+                          <div className="flex flex-wrap items-center gap-3">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider">Deadline Date & Time</label>
+                              <input
+                                type="datetime-local"
+                                required
+                                value={countdownInput}
+                                onChange={(e) => setCountdownInput(e.target.value)}
+                                className="bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-semibold"
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              className="bg-amber-500 hover:bg-amber-600 text-black font-black px-5 py-2.5 rounded-xl text-xs transition-all shadow-md border border-amber-400 self-end"
+                            >
+                              Start Countdown
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {/* Selected Days */}
+                            <div className="space-y-1.5">
+                              <label className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block">Select Repeating Days</label>
+                              <div className="flex flex-wrap gap-2">
+                                {[
+                                  { label: "Mon", value: 1 },
+                                  { label: "Tue", value: 2 },
+                                  { label: "Wed", value: 3 },
+                                  { label: "Thu", value: 4 },
+                                  { label: "Fri", value: 5 },
+                                  { label: "Sat", value: 6 },
+                                  { label: "Sun", value: 0 }
+                                ].map((day) => {
+                                  const isSelected = selectedDays.includes(day.value);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={day.value}
+                                      onClick={() => {
+                                        setSelectedDays((prev) =>
+                                          prev.includes(day.value)
+                                            ? prev.filter((d) => d !== day.value)
+                                            : [...prev, day.value]
+                                        );
+                                      }}
+                                      className={`px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
+                                        isSelected
+                                          ? "bg-amber-500 text-black border-amber-400 font-extrabold shadow-md"
+                                          : "bg-zinc-950 text-zinc-400 border-zinc-850 hover:border-zinc-700 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      {day.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Frequency & Starting Date Row */}
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                              {/* Frequency */}
+                              <div className="md:col-span-5 space-y-1.5">
+                                <label className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block">Frequency</label>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-zinc-400 font-semibold shrink-0">Once every</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    required
+                                    value={frequencyValue}
+                                    onChange={(e) => setFrequencyValue(Math.max(1, parseInt(e.target.value) || 1))}
+                                    className="w-16 bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-xl px-2.5 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-black text-center"
+                                  />
+                                  <select
+                                    value={frequencyUnit}
+                                    onChange={(e) => setFrequencyUnit(e.target.value as any)}
+                                    className="bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-semibold cursor-pointer"
+                                  >
+                                    <option value="weeks">Weeks</option>
+                                    <option value="months">Months</option>
+                                    <option value="years">Years</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Start Date & Time */}
+                              <div className="md:col-span-7 space-y-1.5">
+                                <label className="text-[9px] font-extrabold text-stone-400 uppercase tracking-wider block">Starting Date & Time</label>
+                                <div className="flex flex-col sm:flex-row gap-3">
+                                  <div className="flex-1">
+                                    <input
+                                      type="datetime-local"
+                                      required
+                                      value={startDateInput}
+                                      onChange={(e) => setStartDateInput(e.target.value)}
+                                      className="w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-semibold"
+                                    />
+                                  </div>
+                                  <button
+                                    type="submit"
+                                    className="bg-amber-500 hover:bg-amber-600 text-black font-black px-5 py-2 rounded-xl text-xs transition-all shadow-md border border-amber-400 whitespace-nowrap"
+                                  >
+                                    Schedule Repeating
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Live Day-of-Week validation feedback */}
+                            {startDateInput && (
+                              <div className="mt-1">
+                                {(() => {
+                                  const dateObj = new Date(startDateInput);
+                                  const dayOfWeek = dateObj.getDay();
+                                  const daysNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+                                  const isValid = selectedDays.includes(dayOfWeek);
+                                  
+                                  if (selectedDays.length === 0) {
+                                    return (
+                                      <p className="text-[11px] text-zinc-400 font-semibold">
+                                        💡 Pick your repeating days above first.
+                                      </p>
+                                    );
+                                  }
+                                  
+                                  return isValid ? (
+                                    <p className="text-[11px] text-green-400 font-semibold flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 rounded-xl px-3 py-2">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                                      Valid: Starting date falls on a <strong className="underline uppercase tracking-wide">{daysNames[dayOfWeek]}</strong>, which matches your selected days!
+                                    </p>
+                                  ) : (
+                                    <p className="text-[11px] text-red-400 font-semibold flex items-center gap-1.5 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-red-450" />
+                                      Error: Starting date falls on a <strong className="underline uppercase tracking-wide">{daysNames[dayOfWeek]}</strong>, which is not in your selected repeating days!
+                                    </p>
+                                  );
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </form>
                     </div>
                   )}
@@ -1871,7 +2175,7 @@ export default function App() {
                               {sortedMovieSuggestions.map((movie, index) => {
                                 const voterId = user?.uid || sessionId;
                                 const hasVoted = movie.voterIds?.includes(voterId);
-                                const isOwner = movie.suggestedById === (user?.uid || sessionId) || activeList.creatorId === user?.uid;
+                                const isOwner = movie.suggestedById === (user?.uid || sessionId) || activeList.creatorId === user?.uid || isAdminOfRoom;
                                 
                                 const isTopMovie = index === 0;
                                 const isGoldHighlighted = !!(timeLeft?.isFrozen && isTopMovie);
@@ -2018,28 +2322,39 @@ export default function App() {
                                                 </div>
                                               </div>
 
-                                              {/* VOTE TRIGGER BUTTON */}
-                                              {isGoldHighlighted ? (
-                                                <div
-                                                  className="sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 shadow-md shrink-0 font-serif uppercase tracking-wider"
-                                                  title="Voting is frozen for this choice"
-                                                >
-                                                  <Lock className="w-4 h-4 text-amber-400" />
-                                                  <span>{movie.voterIds?.length || 0} Votes (Locked)</span>
-                                                </div>
-                                              ) : (
+                                              {/* VOTER HISTORY & VOTE TRIGGER BUTTON */}
+                                              <div className="flex items-center gap-2 sm:self-start shrink-0">
+                                                {/* Voter History button */}
                                                 <button
-                                                  onClick={() => handleToggleVote(movie)}
-                                                  className={`sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2.5 rounded-xl border transition-all shadow-md active:scale-95 shrink-0 ${
-                                                    hasVoted 
-                                                      ? "bg-amber-500 text-black border-amber-400" 
-                                                      : "bg-zinc-950 hover:bg-zinc-900 text-amber-300 border-zinc-800 hover:border-zinc-700"
-                                                  }`}
+                                                  onClick={() => setViewingVotersMovie(movie)}
+                                                  className="flex items-center justify-center p-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-900 text-zinc-400 hover:text-amber-400 border border-zinc-800 hover:border-zinc-700 transition-all shadow-md active:scale-95"
+                                                  title="View voting history"
                                                 >
-                                                  <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-black" : "text-amber-400"}`} />
-                                                  <span>{movie.voterIds?.length || 0} Votes</span>
+                                                  <Users className="w-4 h-4" />
                                                 </button>
-                                              )}
+
+                                                {isGoldHighlighted ? (
+                                                  <div
+                                                    className="flex items-center justify-center gap-2 font-black text-xs px-4 py-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 shadow-md font-serif uppercase tracking-wider"
+                                                    title="Voting is frozen for this choice"
+                                                  >
+                                                    <Lock className="w-4 h-4 text-amber-400" />
+                                                    <span>{movie.voterIds?.length || 0} Votes (Locked)</span>
+                                                  </div>
+                                                ) : (
+                                                  <button
+                                                    onClick={() => handleToggleVote(movie)}
+                                                    className={`flex items-center justify-center gap-2 font-black text-xs px-4 py-2.5 rounded-xl border transition-all shadow-md active:scale-95 ${
+                                                      hasVoted 
+                                                        ? "bg-amber-500 text-black border-amber-400" 
+                                                        : "bg-zinc-950 hover:bg-zinc-900 text-amber-300 border-zinc-800 hover:border-zinc-700"
+                                                    }`}
+                                                  >
+                                                    <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-black" : "text-amber-400"}`} />
+                                                    <span>{movie.voterIds?.length || 0} Votes</span>
+                                                  </button>
+                                                )}
+                                              </div>
                                             </div>
 
                                             <p className="text-zinc-300 text-xs leading-relaxed line-clamp-3 font-medium font-serif italic">
@@ -2119,7 +2434,7 @@ export default function App() {
                                                 <p className="text-zinc-200 text-xs leading-relaxed pr-6 font-medium">{pro.text}</p>
                                                 <div className="flex items-center justify-between text-[9px] text-zinc-500 font-bold uppercase tracking-wider">
                                                   <span>&mdash; {pro.author}</span>
-                                                  {(pro.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
+                                                  {(pro.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid || isAdminOfRoom) && (
                                                     <button
                                                       onClick={() => handleDeleteArgument(movie, pro, "pro")}
                                                       className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
@@ -2182,7 +2497,7 @@ export default function App() {
                                                 <p className="text-zinc-200 text-xs leading-relaxed pr-6 font-medium">{con.text}</p>
                                                 <div className="flex items-center justify-between text-[9px] text-zinc-500 font-bold uppercase tracking-wider">
                                                   <span>&mdash; {con.author}</span>
-                                                  {(con.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
+                                                  {(con.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid || isAdminOfRoom) && (
                                                     <button
                                                       onClick={() => handleDeleteArgument(movie, con, "con")}
                                                       className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
@@ -2478,6 +2793,160 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* VOTERS HISTORY MODAL */}
+      <AnimatePresence>
+        {viewingVotersMovie && (() => {
+          const activeMovie = 
+            movieSuggestions.find(m => m.id === viewingVotersMovie.id) || 
+            watchedMovies.find(m => m.id === viewingVotersMovie.id) || 
+            viewingVotersMovie;
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              {/* Backdrop */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setViewingVotersMovie(null)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-md"
+              />
+
+              {/* Modal Box */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                transition={{ type: "spring", duration: 0.5 }}
+                className="relative w-full max-w-md bg-stone-900 border border-amber-500/30 rounded-2xl shadow-2xl overflow-hidden z-10 flex flex-col max-h-[80vh]"
+              >
+                {/* Corner Accent */}
+                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-full pointer-events-none" />
+
+                {/* Header */}
+                <div className="p-6 border-b border-amber-500/10 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] text-amber-500 font-bold uppercase tracking-widest block mb-0.5">Voter Ledger</span>
+                    <h3 className="font-serif font-black text-amber-100 text-base uppercase tracking-wider line-clamp-1">
+                      {activeMovie.title}
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setViewingVotersMovie(null)}
+                    className="p-1.5 rounded-lg bg-zinc-950 hover:bg-zinc-900 text-zinc-500 hover:text-amber-400 transition-colors"
+                  >
+                    <Plus className="w-4 h-4 rotate-45" />
+                  </button>
+                </div>
+
+                {/* Content List */}
+                <div className="p-6 overflow-y-auto space-y-4 flex-1">
+                  {!activeMovie.votersHistory || activeMovie.votersHistory.length === 0 ? (
+                    <div className="py-12 text-center space-y-2">
+                      <Vote className="w-8 h-8 text-zinc-600 mx-auto stroke-[1.5]" />
+                      <p className="text-zinc-500 text-xs font-semibold uppercase tracking-wider">No votes recorded yet.</p>
+                      <p className="text-zinc-600 text-[11px] italic">Be the first to cast a vote!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {activeMovie.votersHistory.map((voter: any, idx: number) => (
+                        <div key={voter.voterId || idx} className="flex items-center justify-between p-3 rounded-xl bg-zinc-950/40 border border-zinc-800 hover:border-amber-500/10 transition-colors">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center font-mono text-[10px] text-amber-400 font-black uppercase">
+                              {voter.name.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="text-zinc-200 text-xs font-bold font-serif">{voter.name}</p>
+                              <p className="text-[9px] text-zinc-500 font-medium tracking-wide uppercase">
+                                Voter #{idx + 1}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[9px] text-amber-400/80 font-mono font-bold">
+                              {new Date(voter.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                            <p className="text-[9px] text-zinc-500 font-mono">
+                              {new Date(voter.timestamp).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer action */}
+                <div className="p-4 bg-zinc-950/60 border-t border-amber-500/10 flex justify-end">
+                  <button
+                    onClick={() => setViewingVotersMovie(null)}
+                    className="bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2 rounded-xl text-xs transition-all active:scale-95 border border-amber-400"
+                  >
+                    Close
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* UNIVERSAL CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {confirmModal && (
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setConfirmModal(null)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-sm"
+            />
+
+            {/* Modal Content */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="relative w-full max-w-sm bg-zinc-900 border border-amber-500/20 rounded-2xl shadow-2xl overflow-hidden z-10 p-6 space-y-4"
+            >
+              <div className="flex items-center gap-3 text-amber-500">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <h3 className="font-serif font-black uppercase tracking-wider text-amber-100 text-sm">
+                  {confirmModal.title}
+                </h3>
+              </div>
+
+              <p className="text-zinc-300 text-xs leading-relaxed font-serif italic">
+                {confirmModal.message}
+              </p>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-black uppercase text-zinc-400 hover:text-zinc-200 bg-zinc-950 border border-zinc-850 hover:border-zinc-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await confirmModal.onConfirm();
+                    setConfirmModal(null);
+                  }}
+                  className="px-4 py-2 rounded-xl text-xs font-black uppercase bg-red-500 hover:bg-red-650 text-white border border-red-400 transition-colors"
+                >
+                  {confirmModal.confirmText || "Confirm"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* FOOTER */}
       <footer className="bg-zinc-950/40 border-t border-zinc-900 py-6 text-zinc-500 text-xs font-semibold backdrop-blur-md mt-auto">
