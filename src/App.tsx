@@ -558,11 +558,6 @@ export default function App() {
   const handleAddMovieSuggestion = async () => {
     if (!selectedMovie || !currentRoute.listId) return;
 
-    if (timeLeft?.isFrozen) {
-      setErrorMessage("Suggesting movies is closed because voting is frozen!");
-      return;
-    }
-
     // Check if the selected movie is already in the watched list
     const isAlreadyWatched = watchedMovies.some(
       (m) => m.title.trim().toLowerCase() === selectedMovie.title.trim().toLowerCase() &&
@@ -967,7 +962,7 @@ export default function App() {
   const isAdminOfRoom = !!(activeList && user && activeList.creatorId === user.uid);
 
   return (
-    <div id="cinevote_app" className="min-h-screen bg-slate-50 text-slate-800 flex flex-col antialiased">
+    <div id="cinevote_app" className="min-h-screen cinema-curtains-bg text-zinc-100 flex flex-col antialiased">
       {/* GLOBAL TOAST ERROR MESSAGE */}
       <AnimatePresence>
         {errorMessage && (
@@ -995,27 +990,27 @@ export default function App() {
             initial={{ opacity: 0, scale: 0.9, y: 50 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 50 }}
-            className="fixed bottom-8 right-8 z-50 bg-sky-600 text-white font-extrabold px-6 py-3 rounded-full shadow-lg border border-sky-500 flex items-center gap-2"
+            className="fixed bottom-8 right-8 z-50 bg-amber-500 text-black font-extrabold px-6 py-3 rounded-full shadow-lg border border-amber-400 flex items-center gap-2"
           >
-            <Check className="w-5 h-5" />
+            <Check className="w-5 h-5 text-black stroke-[3]" />
             <span>Invite Link Copied!</span>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* HEADER / NAVIGATION BAR */}
-      <nav id="navbar" className="sticky top-0 z-40 backdrop-blur-md bg-white/90 border-b border-slate-200/80 shadow-xs transition-all">
+      <nav id="navbar" className="sticky top-0 z-40 backdrop-blur-md bg-zinc-950/80 border-b border-zinc-800/80 shadow-lg transition-all">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <a href="#" className="flex items-center gap-2 group">
-              <div className="bg-sky-500 p-2 rounded-lg shadow-md shadow-sky-500/15 group-hover:scale-105 transition-transform flex items-center justify-center">
-                <Film className="w-5 h-5 text-white stroke-[2.5]" />
+              <div className="bg-amber-500 p-2 rounded-lg shadow-md shadow-amber-500/15 group-hover:scale-105 transition-transform flex items-center justify-center">
+                <Film className="w-5 h-5 text-black stroke-[2.5]" />
               </div>
               <div>
-                <span className="font-extrabold text-lg tracking-tight text-slate-900 font-sans">
-                  Cine<span className="text-sky-600">vote</span>
+                <span className="font-extrabold text-lg tracking-tight text-white font-sans">
+                  Cine<span className="text-amber-500 marquee-glow font-black">vote</span>
                 </span>
-                <span className="hidden sm:inline-block ml-2 text-xs text-slate-500 border-l border-slate-200 pl-2 font-medium">
+                <span className="hidden sm:inline-block ml-2 text-xs text-zinc-400 border-l border-zinc-800 pl-2 font-medium">
                   Interactive Movie Voting
                 </span>
               </div>
@@ -1024,22 +1019,22 @@ export default function App() {
 
           <div className="flex items-center gap-4">
             {/* ALIAS EDIT BAR */}
-            <div className="relative flex items-center bg-[#2b1b11] border border-amber-500/30 rounded-xl px-3 py-1.5 text-xs text-amber-100 shadow-md">
-              <UserIcon className="w-3.5 h-3.5 text-amber-400 mr-2" />
+            <div className="relative flex items-center bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-300 shadow-md">
+              <UserIcon className="w-3.5 h-3.5 text-amber-500 mr-2" />
               {isEditingAlias ? (
                 <form onSubmit={handleSaveAlias} className="flex items-center gap-2">
                   <input
                     type="text"
                     value={tempAlias}
                     onChange={(e) => setTempAlias(e.target.value)}
-                    className="bg-stone-900 text-amber-100 border border-amber-500/30 rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-400 text-xs w-36 font-semibold"
+                    className="bg-stone-950 text-amber-500 border border-amber-500/30 rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-400 text-xs w-36 font-semibold"
                     autoFocus
                     maxLength={25}
                   />
                   <button type="submit" className="text-amber-400 hover:text-amber-300 font-extrabold">
                     Save
                   </button>
-                  <button type="button" onClick={() => setIsEditingAlias(false)} className="text-stone-400 hover:text-stone-300">
+                  <button type="button" onClick={() => setIsEditingAlias(false)} className="text-zinc-500 hover:text-zinc-400">
                     Cancel
                   </button>
                 </form>
@@ -1051,7 +1046,7 @@ export default function App() {
                       setTempAlias(alias);
                       setIsEditingAlias(true);
                     }}
-                    className="text-amber-200 hover:text-amber-100 text-[10px] font-extrabold uppercase tracking-wider"
+                    className="text-amber-300 hover:text-amber-400 text-[10px] font-extrabold uppercase tracking-wider"
                   >
                     Change
                   </button>
@@ -1072,7 +1067,7 @@ export default function App() {
                 <button 
                   onClick={handleLogout}
                   title="Sign Out of Google"
-                  className="p-2 text-amber-300 hover:text-amber-100 hover:bg-stone-800 rounded-lg transition-all"
+                  className="p-2 text-zinc-400 hover:text-amber-400 hover:bg-zinc-900 rounded-lg transition-all"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -1080,9 +1075,9 @@ export default function App() {
             ) : (
               <button 
                 onClick={handleGoogleLogin}
-                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-red-950 border border-amber-400 shadow-md font-extrabold px-3 py-1.5 rounded-lg text-xs transition-all"
+                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-black border border-amber-400 shadow-md font-extrabold px-3 py-1.5 rounded-lg text-xs transition-all"
               >
-                <Lock className="w-3.5 h-3.5 text-red-950" />
+                <Lock className="w-3.5 h-3.5 text-black" />
                 Sign in with Google
               </button>
             )}
@@ -1105,11 +1100,11 @@ export default function App() {
               {/* HERO INTRO */}
               <div className="text-center space-y-4 max-w-3xl mx-auto py-6">
                 <h1 className="text-4xl sm:text-5xl font-serif font-black tracking-widest text-amber-400 marquee-glow leading-none">
-                  THE VINTAGE CINEVOTE <br/>
-                  <span className="text-white uppercase tracking-wider">THEATRE</span>
+                  CINEVOTE MOVIE ROOMS <br/>
+                  <span className="text-white uppercase tracking-wider">PLATFORM</span>
                 </h1>
                 <p className="text-amber-100/80 text-sm sm:text-base max-w-2xl mx-auto font-medium font-serif italic">
-                  Step past the velvet ropes. Propose film selections, cast your votes, and debate pros & cons under the marquee in our interactive cinema lobby.
+                  Create custom watchlists, propose movies, cast your votes, and discuss pros and cons in real-time with your group.
                 </p>
               </div>
 
@@ -1120,36 +1115,36 @@ export default function App() {
                 <div className="w-3 h-3 rounded-full bg-amber-400 border border-amber-500 shadow-md flex-shrink-0" />
               </div>
 
-              {/* THREE-STEP WORKFLOW CARDS (Styled as Vintage Admission Tickets) */}
+              {/* THREE-STEP WORKFLOW CARDS */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="ticket-stub border border-amber-500/40 p-6 rounded-2xl space-y-3 shadow-lg relative overflow-hidden group hover:scale-[1.02] transition-transform">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-full" />
-                  <div className="w-10 h-10 bg-amber-500 text-red-950 font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-sm">
+                <div className="ticket-stub border border-amber-500/20 p-6 rounded-2xl space-y-3 shadow-xl relative overflow-hidden group hover:scale-[1.02] transition-all duration-300">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                  <div className="w-10 h-10 bg-amber-500 text-black font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-md">
                     01
                   </div>
-                  <h3 className="font-serif font-black text-[#2b1b11] text-lg uppercase tracking-wide">Select a Feature</h3>
-                  <p className="text-stone-800 text-xs leading-relaxed font-medium">
-                    Log in with Google to reserve a private theatre room for movie nights, double features, or holiday watchlist voting.
+                  <h3 className="font-serif font-black text-amber-400 text-lg uppercase tracking-wider">Create a Room</h3>
+                  <p className="text-zinc-300 text-xs leading-relaxed font-medium">
+                    Log in with Google to create a private movie room for movie nights, watchlists, or voting.
                   </p>
                 </div>
-                <div className="ticket-stub border border-amber-500/40 p-6 rounded-2xl space-y-3 shadow-lg relative overflow-hidden group hover:scale-[1.02] transition-transform">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-full" />
-                  <div className="w-10 h-10 bg-amber-500 text-red-950 font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-sm">
+                <div className="ticket-stub border border-amber-500/20 p-6 rounded-2xl space-y-3 shadow-xl relative overflow-hidden group hover:scale-[1.02] transition-all duration-300">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                  <div className="w-10 h-10 bg-amber-500 text-black font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-md">
                     02
                   </div>
-                  <h3 className="font-serif font-black text-[#2b1b11] text-lg uppercase tracking-wide">Hand Out Tickets</h3>
-                  <p className="text-stone-800 text-xs leading-relaxed font-medium">
-                    Share your unique theatre room key with friends. No logins, accounts, or ticket fees are required for guests to participate!
+                  <h3 className="font-serif font-black text-amber-400 text-lg uppercase tracking-wider">Share the Link</h3>
+                  <p className="text-zinc-300 text-xs leading-relaxed font-medium">
+                    Share your unique movie room code with friends. No logins or accounts are required for guests to join and participate!
                   </p>
                 </div>
-                <div className="ticket-stub border border-amber-500/40 p-6 rounded-2xl space-y-3 shadow-lg relative overflow-hidden group hover:scale-[1.02] transition-transform">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-full" />
-                  <div className="w-10 h-10 bg-amber-500 text-red-950 font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-sm">
+                <div className="ticket-stub border border-amber-500/20 p-6 rounded-2xl space-y-3 shadow-xl relative overflow-hidden group hover:scale-[1.02] transition-all duration-300">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                  <div className="w-10 h-10 bg-amber-500 text-black font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-md">
                     03
                   </div>
-                  <h3 className="font-serif font-black text-[#2b1b11] text-lg uppercase tracking-wide">Cast Your Ballot</h3>
-                  <p className="text-stone-800 text-xs leading-relaxed font-medium">
-                    Propose showtimes with auto-loaded TMDB posters, cast votes in real-time, and draft pros/cons debates before the projector starts.
+                  <h3 className="font-serif font-black text-amber-400 text-lg uppercase tracking-wider">Vote & Discuss</h3>
+                  <p className="text-zinc-300 text-xs leading-relaxed font-medium">
+                    Propose movies with automatic TMDB details, cast votes in real-time, and discuss pros and cons together before watching.
                   </p>
                 </div>
               </div>
@@ -1159,10 +1154,10 @@ export default function App() {
                 {/* LEFT COLUMN: Create and Join Rooms */}
                 <div className="lg:col-span-5 space-y-6">
                   {/* JOIN DIRECTLY FORM */}
-                  <div className="bg-rose-950/40 border border-amber-500/30 p-6 rounded-2xl shadow-xl space-y-4">
+                  <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded-2xl shadow-2xl space-y-4">
                     <h2 className="font-serif font-black text-amber-400 text-lg flex items-center gap-2 uppercase tracking-wider">
                       <Ticket className="w-5 h-5 text-amber-500" />
-                      Enter with Room Ticket
+                      Join with Room Code
                     </h2>
                     <form onSubmit={handleJoinRoom} className="flex gap-2">
                       <input
@@ -1170,11 +1165,11 @@ export default function App() {
                         placeholder="Enter 20-character Room ID"
                         value={joinRoomId}
                         onChange={(e) => setJoinRoomId(e.target.value)}
-                        className="flex-1 bg-stone-900/60 text-amber-100 placeholder-stone-500 border border-amber-500/20 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-400 font-mono"
+                        className="flex-1 bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-500/50 font-mono font-medium"
                       />
                       <button 
                         type="submit"
-                        className="bg-amber-500 hover:bg-amber-600 text-red-950 font-black px-4 py-2.5 rounded-xl text-sm transition-all shadow-md active:scale-95 border border-amber-400"
+                        className="bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2.5 rounded-xl text-sm transition-all shadow-md active:scale-95 border border-amber-400"
                       >
                         Enter
                       </button>
@@ -1182,22 +1177,22 @@ export default function App() {
                   </div>
 
                   {/* CREATE NEW ROOM FORM */}
-                  <div className="bg-rose-950/40 border border-amber-500/30 p-6 rounded-2xl shadow-xl space-y-4 relative">
+                  <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded-2xl shadow-2xl space-y-4 relative">
                     <h2 className="font-serif font-black text-amber-400 text-lg flex items-center gap-2 uppercase tracking-wider">
                       <Clapperboard className="w-5 h-5 text-amber-500" />
-                      Commission a Screen Room
+                      Create a Movie Room
                     </h2>
 
                     {!user ? (
-                      <div className="bg-[#1c120c] border border-amber-500/20 p-6 rounded-xl text-center space-y-4">
+                      <div className="bg-zinc-950 border border-zinc-800/80 p-6 rounded-xl text-center space-y-4">
                         <Lock className="w-8 h-8 text-amber-500 mx-auto" />
                         <div className="space-y-1">
-                          <h4 className="font-serif font-black text-amber-400 text-sm uppercase">Authentication Required</h4>
-                          <p className="text-stone-300 text-xs font-medium">To commission and manage custom collaborative screening rooms, please sign in via Google.</p>
+                          <h4 className="font-serif font-black text-amber-400 text-sm uppercase tracking-wider">Authentication Required</h4>
+                          <p className="text-zinc-400 text-xs font-medium">To create and manage custom collaborative movie rooms, please sign in via Google.</p>
                         </div>
                         <button 
                           onClick={handleGoogleLogin}
-                          className="w-full bg-amber-500 hover:bg-amber-600 text-red-950 border border-amber-400 font-black py-2.5 px-4 rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2"
+                          className="w-full bg-amber-500 hover:bg-amber-600 text-black border border-amber-400 font-black py-2.5 px-4 rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2"
                         >
                           <Lock className="w-4 h-4 stroke-[2.5]" />
                           Sign in with Google
@@ -1213,7 +1208,7 @@ export default function App() {
                             value={newListTitle}
                             onChange={(e) => setNewListTitle(e.target.value)}
                             required
-                            className="w-full bg-[#1c120c] text-amber-100 placeholder-stone-500 border border-amber-500/20 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-400 font-semibold"
+                            className="w-full bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-500/50 font-semibold"
                           />
                         </div>
 
@@ -1224,16 +1219,16 @@ export default function App() {
                             value={newListDesc}
                             onChange={(e) => setNewListDesc(e.target.value)}
                             rows={3}
-                            className="w-full bg-[#1c120c] text-amber-100 placeholder-stone-500 border border-amber-500/20 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-400 resize-none"
+                            className="w-full bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-500/50 resize-none font-medium"
                           />
                         </div>
 
                         <button 
                           type="submit"
                           disabled={isCreatingList}
-                          className="w-full bg-amber-500 hover:bg-amber-600 text-red-950 font-black py-3 px-4 rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed border border-amber-400"
+                          className="w-full bg-amber-500 hover:bg-amber-600 text-black font-black py-3 px-4 rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed border border-amber-400"
                         >
-                          {isCreatingList ? "Setting up screen room..." : "Commission Screening Room"}
+                          {isCreatingList ? "Setting up movie room..." : "Create Movie Room"}
                           <Plus className="w-4 h-4 stroke-[2.5]" />
                         </button>
                       </form>
@@ -1245,40 +1240,40 @@ export default function App() {
                 <div className="lg:col-span-7 space-y-6">
                   {/* CREATED LISTS (IF LOGGED IN) */}
                   {user && (
-                    <div className="bg-rose-950/40 border border-amber-500/30 p-6 rounded-2xl shadow-xl space-y-4">
+                    <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded-2xl shadow-2xl space-y-4">
                       <h2 className="font-serif font-black text-amber-400 text-lg flex items-center gap-2 uppercase tracking-wider">
                         <Tv className="w-5 h-5 text-amber-500" />
-                        Rooms You Commissioned
+                        Rooms You Created
                       </h2>
                       {myCreatedLists.length === 0 ? (
-                        <div className="text-center py-8 bg-[#1c120c]/55 rounded-xl border border-dashed border-amber-500/20 p-4">
-                          <p className="text-stone-400 text-xs font-semibold">You haven't commissioned any screen rooms yet.</p>
+                        <div className="text-center py-8 bg-zinc-950 rounded-xl border border-dashed border-zinc-800 p-4">
+                          <p className="text-zinc-400 text-xs font-semibold">You haven't created any movie rooms yet.</p>
                         </div>
                       ) : (
-                        <div className="divide-y divide-amber-500/10 max-h-72 overflow-y-auto pr-1">
+                        <div className="divide-y divide-zinc-800 max-h-72 overflow-y-auto pr-1">
                           {myCreatedLists.map((list) => (
                             <div key={list.id} className="py-3 flex items-center justify-between group first:pt-0 last:pb-0">
                               <div className="space-y-1 flex-1 pr-4">
                                 <a 
                                   href={`#/list/${list.id}`}
-                                  className="font-bold text-stone-100 hover:text-amber-400 text-sm block transition-colors line-clamp-1"
+                                  className="font-bold text-zinc-100 hover:text-amber-400 text-sm block transition-colors line-clamp-1"
                                 >
                                   {list.title}
                                 </a>
                                 {list.description && (
-                                  <p className="text-stone-400 text-xs line-clamp-1">{list.description}</p>
+                                  <p className="text-zinc-400 text-xs line-clamp-1">{list.description}</p>
                                 )}
                               </div>
                               <div className="flex items-center gap-2">
                                 <a 
                                   href={`#/list/${list.id}`}
-                                  className="bg-amber-500 hover:bg-amber-600 text-red-950 font-black px-3 py-1 rounded-lg text-xs transition-all border border-amber-400"
+                                  className="bg-amber-500 hover:bg-amber-600 text-black font-black px-3 py-1 rounded-lg text-xs transition-all border border-amber-400"
                                 >
                                   Enter
                                 </a>
                                 <button 
                                   onClick={() => handleDeleteListRoom(list.id)}
-                                  className="p-1.5 text-stone-400 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition-all"
+                                  className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-zinc-850 rounded-lg transition-all"
                                   title="Delete room"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -1292,21 +1287,21 @@ export default function App() {
                   )}
 
                   {/* RECENTLY VISITED ROOMS */}
-                  <div className="bg-rose-950/40 border border-amber-500/30 p-6 rounded-2xl shadow-xl space-y-4">
+                  <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded-2xl shadow-2xl space-y-4">
                     <h2 className="font-serif font-black text-amber-400 text-lg flex items-center gap-2 uppercase tracking-wider">
                       <Users className="w-5 h-5 text-amber-500" />
                       Recently Visited Rooms
                     </h2>
                     {recentListsData.length === 0 ? (
-                      <div className="text-center py-8 bg-[#1c120c]/55 rounded-xl border border-dashed border-amber-500/20 p-4">
-                        <p className="text-stone-400 text-xs font-semibold">No active room tickets in your screening history.</p>
+                      <div className="text-center py-8 bg-zinc-950 rounded-xl border border-dashed border-zinc-800 p-4">
+                        <p className="text-zinc-400 text-xs font-semibold">No active rooms in your history.</p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-96 overflow-y-auto pr-1">
                         {recentListsData.map((list) => (
                           <div 
                             key={list.id} 
-                            className="bg-[#1c120c]/60 border border-amber-500/20 hover:border-amber-500/50 p-4 rounded-xl flex flex-col justify-between transition-all group shadow-md"
+                            className="bg-zinc-900/30 border border-zinc-800 hover:border-amber-500/30 p-4 rounded-xl flex flex-col justify-between transition-all group shadow-md"
                           >
                             <div className="space-y-1.5">
                               <a 
@@ -1316,14 +1311,14 @@ export default function App() {
                                 {list.title}
                               </a>
                               {list.description && (
-                                <p className="text-stone-300 text-[11px] line-clamp-2 leading-relaxed font-medium">{list.description}</p>
+                                <p className="text-zinc-300 text-[11px] line-clamp-2 leading-relaxed font-medium">{list.description}</p>
                               )}
                             </div>
-                            <div className="mt-3 pt-3 border-t border-amber-500/10 flex items-center justify-between text-[10px] text-stone-400 font-bold uppercase tracking-widest">
+                            <div className="mt-3 pt-3 border-t border-zinc-800/80 flex items-center justify-between text-[10px] text-zinc-400 font-bold uppercase tracking-widest">
                               <span className="truncate max-w-[100px]">By {list.creatorName}</span>
                               <a 
                                 href={`#/list/${list.id}`}
-                                className="text-amber-400 hover:text-amber-300 font-extrabold"
+                                className="text-amber-400 hover:text-amber-300 font-extrabold font-mono"
                               >
                                 ENTER &rarr;
                               </a>
@@ -1354,7 +1349,7 @@ export default function App() {
               ) : activeList ? (
                  <div className="space-y-8">
                   {/* ROOM HEADER / ACTION LINE */}
-                  <div className="bg-rose-950/40 border border-amber-500/30 p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden">
+                  <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded-2xl shadow-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
                     
                     <div className="space-y-2 flex-1">
@@ -1362,7 +1357,7 @@ export default function App() {
                         onClick={() => {
                           window.location.hash = "";
                         }}
-                        className="inline-flex items-center gap-1.5 text-xs text-amber-300 hover:text-amber-100 transition-colors bg-stone-900 hover:bg-stone-800 border border-amber-500/20 px-3 py-1.5 rounded-lg font-bold"
+                        className="inline-flex items-center gap-1.5 text-xs text-amber-300 hover:text-amber-100 transition-colors bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-lg font-bold"
                       >
                         <ArrowLeft className="w-3.5 h-3.5" />
                         Lobby
@@ -1371,39 +1366,39 @@ export default function App() {
                         {activeList.title}
                       </h1>
                       {activeList.description && (
-                        <p className="text-stone-300 text-xs sm:text-sm max-w-3xl leading-relaxed font-medium">{activeList.description}</p>
+                        <p className="text-zinc-300 text-xs sm:text-sm max-w-3xl leading-relaxed font-medium">{activeList.description}</p>
                       )}
-                      <div className="flex items-center gap-3 pt-1 text-[11px] text-stone-400 font-semibold uppercase tracking-widest">
+                      <div className="flex items-center gap-3 pt-1 text-[11px] text-zinc-400 font-semibold uppercase tracking-widest">
                         <span>Created by: <strong className="text-amber-300 font-bold">{activeList.creatorName}</strong></span>
                         <span>&bull;</span>
-                        <span className="font-mono">{activeList.id}</span>
+                        <span className="font-mono text-amber-500/80">{activeList.id}</span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 w-full md:w-auto shrink-0 border-t md:border-t-0 pt-4 md:pt-0 border-amber-500/10">
+                    <div className="flex items-center gap-3 w-full md:w-auto shrink-0 border-t md:border-t-0 pt-4 md:pt-0 border-zinc-800">
                       <button 
                         onClick={copyInviteLink}
-                        className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-red-950 font-black px-4 py-2.5 rounded-xl text-xs transition-all shadow-md active:scale-95 border border-amber-400"
+                        className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2.5 rounded-xl text-xs transition-all shadow-md active:scale-95 border border-amber-400"
                       >
-                        <Share2 className="w-4 h-4 text-red-950" />
+                        <Share2 className="w-4 h-4 text-black" />
                         Copy Invite Link
                       </button>
                     </div>
                   </div>
 
-                  {/* THEATRE HOUSE RULES PANEL */}
-                  <div className="bg-[#1c120c]/60 border border-amber-500/30 p-5 rounded-2xl shadow-xl space-y-3 relative overflow-hidden">
+                  {/* ROOM RULES PANEL */}
+                  <div className="bg-zinc-900/40 border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-3 relative overflow-hidden">
                     <div className="flex items-center justify-between">
                       <h3 className="font-serif font-black text-amber-400 text-sm sm:text-base uppercase tracking-widest flex items-center gap-2">
                         <Clapperboard className="w-4 h-4 text-amber-500" />
-                        Theatre House Rules
+                        Room Rules
                       </h3>
                       {isAdminOfRoom && (
                         <button
                           onClick={() => {
                             setIsEditingRules(!isEditingRules);
                           }}
-                          className="text-xs text-amber-300 hover:text-amber-200 font-extrabold uppercase tracking-wider bg-stone-900/60 hover:bg-stone-900 border border-amber-500/20 px-2 py-1 rounded"
+                          className="text-xs text-amber-300 hover:text-amber-200 font-extrabold uppercase tracking-wider bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 px-2 py-1 rounded"
                         >
                           {isEditingRules ? "Cancel" : "Edit Rules"}
                         </button>
@@ -1417,20 +1412,20 @@ export default function App() {
                           onChange={(e) => setRulesInput(e.target.value)}
                           placeholder="Write the rules for this room (e.g. Max 3 suggestions per guest, no horror movies...)"
                           rows={3}
-                          className="w-full bg-stone-950 text-amber-100 placeholder-stone-500 border border-amber-500/20 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-400 resize-none font-semibold"
+                          className="w-full bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-500/50 resize-none font-semibold"
                         />
                         <div className="flex justify-end">
                           <button
                             onClick={handleSaveRules}
-                            className="bg-amber-500 hover:bg-amber-600 text-red-950 font-black px-4 py-2 rounded-xl text-xs border border-amber-400 shadow-md"
+                            className="bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2 rounded-xl text-xs border border-amber-400 shadow-md"
                           >
                             Save Rules
                           </button>
                         </div>
                       </div>
                     ) : (
-                      <p className="text-stone-300 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap font-medium">
-                        {activeList.rules ? activeList.rules : "No house rules have been set for this screening room yet."}
+                      <p className="text-zinc-300 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap font-medium">
+                        {activeList.rules ? activeList.rules : "No rules have been set for this movie room yet."}
                       </p>
                     )}
                   </div>
@@ -1439,17 +1434,17 @@ export default function App() {
                   {activeList.releaseTime && timeLeft && (
                     <div className={`border p-6 rounded-2xl shadow-xl relative overflow-hidden transition-all ${
                       timeLeft.isFrozen 
-                        ? "bg-amber-950/60 border-amber-500/50 ring-1 ring-amber-400/30" 
-                        : "bg-rose-950/30 border-amber-500/20"
+                        ? "bg-amber-950/40 border-amber-500/40 ring-1 ring-amber-400/20" 
+                        : "bg-zinc-900/40 border-zinc-800"
                     }`}>
                       <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-full" />
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
                             {timeLeft.isFrozen ? (
-                              <span className="inline-flex items-center gap-1 bg-amber-500 text-red-950 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse shadow-sm border border-amber-300">
+                              <span className="inline-flex items-center gap-1 bg-amber-500 text-black text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse shadow-sm border border-amber-300">
                                 <Lock className="w-3 h-3 stroke-[3]" />
-                                Voting Frozen on #1
+                                Voting Locked on #1
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm">
@@ -1457,45 +1452,45 @@ export default function App() {
                                 Countdown Active
                               </span>
                             )}
-                            <span className="text-xs text-stone-300 font-semibold">
-                              Release scheduled for: <strong className="text-amber-400 font-bold">{new Date(activeList.releaseTime).toLocaleString()}</strong>
+                            <span className="text-xs text-zinc-300 font-semibold">
+                              Scheduled watch time: <strong className="text-amber-400 font-bold">{new Date(activeList.releaseTime).toLocaleString()}</strong>
                             </span>
                           </div>
 
                           <h3 className="font-serif font-black text-amber-300 text-base leading-snug uppercase tracking-wider">
                             {timeLeft.isFrozen 
-                              ? "The voting has been frozen! The final movie selection is highlighted below." 
-                              : "Voting freezes 24 hours before the scheduled release deadline."}
+                              ? "The voting has locked! The chosen movie is highlighted below." 
+                              : "Voting locks 24 hours before the scheduled watch time."}
                           </h3>
                         </div>
 
                         {/* TIMER NUMBERS */}
                         <div className="flex items-center gap-4 shrink-0">
                           <div className="flex gap-2">
-                            <div className="bg-stone-900 border border-amber-500/30 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
                               <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
                                 {String(timeLeft.hours).padStart(2, '0')}
                               </span>
-                              <span className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Hrs</span>
+                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Hrs</span>
                             </div>
-                            <div className="bg-stone-900 border border-amber-500/30 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
                               <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
                                 {String(timeLeft.minutes).padStart(2, '0')}
                               </span>
-                              <span className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Min</span>
+                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Min</span>
                             </div>
-                            <div className="bg-stone-900 border border-amber-500/30 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
                               <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
                                 {String(timeLeft.seconds).padStart(2, '0')}
                               </span>
-                              <span className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Sec</span>
+                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Sec</span>
                             </div>
                           </div>
 
                           {isAdminOfRoom && (
                             <button
                               onClick={handleCancelReleaseCountdown}
-                              className="bg-stone-900 hover:bg-stone-800 text-amber-400 hover:text-amber-300 border border-amber-500/30 font-extrabold px-3 py-2 rounded-xl text-xs transition-all shadow-md"
+                              className="bg-zinc-950 hover:bg-zinc-900 text-amber-400 hover:text-amber-300 border border-zinc-800 font-extrabold px-3 py-2 rounded-xl text-xs transition-all shadow-md"
                             >
                               Cancel
                             </button>
@@ -1507,15 +1502,15 @@ export default function App() {
 
                   {/* ADMIN COUNTDOWN SCHEDULER PANEL */}
                   {!activeList.releaseTime && isAdminOfRoom && (
-                    <div className="bg-rose-950/40 border border-amber-500/30 p-5 rounded-2xl shadow-xl space-y-3">
+                    <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-3">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="space-y-1">
                           <h4 className="font-serif font-black text-amber-400 text-sm flex items-center gap-2 uppercase tracking-wider">
                             <Clock className="w-4 h-4 text-amber-500" />
-                            Schedule a Release Countdown
+                            Schedule a Voting Deadline
                           </h4>
-                          <p className="text-xs text-stone-300 font-medium font-serif italic">
-                            Schedule a release date & time. Voting will freeze 24 hours before the deadline for the #1 movie candidate.
+                          <p className="text-xs text-zinc-300 font-medium font-serif italic">
+                            Schedule the voting deadline date & time. Voting will lock 24 hours before this deadline.
                           </p>
                         </div>
                       </div>
@@ -1525,11 +1520,11 @@ export default function App() {
                           required
                           value={countdownInput}
                           onChange={(e) => setCountdownInput(e.target.value)}
-                          className="bg-stone-900 text-amber-100 border border-amber-500/20 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-400 font-semibold"
+                          className="bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-semibold"
                         />
                         <button
                           type="submit"
-                          className="bg-amber-500 hover:bg-amber-600 text-red-950 font-black px-4 py-2 rounded-xl text-xs transition-all shadow-md border border-amber-400"
+                          className="bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2 rounded-xl text-xs transition-all shadow-md border border-amber-400"
                         >
                           Start Countdown
                         </button>
@@ -1541,13 +1536,13 @@ export default function App() {
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                     {/* LEFT PANEL: Propose a Movie Suggestion & Watched History */}
                     <div className="lg:col-span-4 space-y-6">
-                      <div className="bg-rose-950/40 border border-amber-500/30 p-6 rounded-2xl shadow-xl space-y-4">
+                      <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded-2xl shadow-2xl space-y-4">
                         <h3 className="font-serif font-black text-amber-400 text-base flex items-center gap-2 uppercase tracking-widest">
                           <PlusCircle className="w-5 h-5 text-amber-500" />
                           Suggest a Movie
                         </h3>
                         <p className="text-xs text-stone-300 leading-relaxed font-medium font-serif italic">
-                          Type a movie title below. We'll automatically query the cinema database to load high-resolution posters and synopsis details!
+                          Type a movie title below. We'll automatically search TMDB to load high-resolution posters and synopsis details!
                         </p>
 
                         {/* Search input with live autocomplete dropdown */}
@@ -1665,21 +1660,21 @@ export default function App() {
                               return (
                                 <>
                                   {isAlreadyWatched && (
-                                    <div className="bg-rose-950/40 border border-rose-500/30 text-rose-300 p-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 mt-2">
+                                    <div className="bg-rose-950/20 border border-rose-900/40 text-rose-400 p-2.5 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 mt-2">
                                       <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                                       <span>This film has already been screened and is blocked.</span>
                                     </div>
                                   )}
                                   
-                                  <div className="flex flex-col gap-2 border-t border-amber-500/10 pt-3">
+                                  <div className="flex flex-col gap-2 border-t border-zinc-800 pt-3">
                                     {isAdminOfRoom ? (
                                       <div className="flex flex-col gap-2 w-full">
                                         <div className="flex gap-2 w-full">
                                           <button
                                             onClick={handleAddMovieSuggestion}
-                                            disabled={isAlreadyWatched || !!timeLeft?.isFrozen}
-                                            className="flex-1 bg-amber-500 hover:bg-amber-600 text-red-950 border border-amber-400 font-black py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-                                            title={timeLeft?.isFrozen ? "Voting is frozen" : isAlreadyWatched ? "Already watched" : "Propose to watchlist"}
+                                            disabled={isAlreadyWatched}
+                                            className="flex-1 bg-amber-500 hover:bg-amber-600 text-black border border-amber-400 font-black py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title={isAlreadyWatched ? "Already watched" : "Propose to watchlist"}
                                           >
                                             Propose
                                             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -1695,7 +1690,7 @@ export default function App() {
                                         </div>
                                         <button
                                           onClick={() => setSelectedMovie(null)}
-                                          className="w-full bg-stone-900 hover:bg-stone-800 text-stone-300 font-bold py-2 rounded-lg text-xs transition-colors border border-amber-500/20"
+                                          className="w-full bg-zinc-950 hover:bg-zinc-900 text-zinc-300 font-bold py-2 rounded-lg text-xs transition-colors border border-zinc-800"
                                         >
                                           Cancel
                                         </button>
@@ -1704,15 +1699,15 @@ export default function App() {
                                       <div className="flex gap-2 w-full">
                                         <button
                                           onClick={handleAddMovieSuggestion}
-                                          disabled={isAlreadyWatched || !!timeLeft?.isFrozen}
-                                          className="flex-1 bg-amber-500 hover:bg-amber-600 text-red-950 border border-amber-400 font-black py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                          disabled={isAlreadyWatched}
+                                          className="flex-1 bg-amber-500 hover:bg-amber-600 text-black border border-amber-400 font-black py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-1 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                           Propose Selection
                                           <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                                         </button>
                                         <button
                                           onClick={() => setSelectedMovie(null)}
-                                          className="bg-stone-900 hover:bg-stone-800 text-stone-300 font-bold px-3 py-2 rounded-lg text-xs transition-colors border border-amber-500/20"
+                                          className="bg-zinc-950 hover:bg-zinc-900 text-zinc-300 font-bold px-3 py-2 rounded-lg text-xs transition-colors border border-zinc-800"
                                         >
                                           Cancel
                                         </button>
@@ -1727,23 +1722,23 @@ export default function App() {
                       </div>
 
                       {/* COMPACT WATCHED HISTORY ON MAIN ROOM SCREEN */}
-                      <div className="bg-rose-950/40 border border-amber-500/30 p-5 rounded-2xl shadow-xl space-y-4">
-                        <div className="flex items-center gap-2 border-b border-amber-500/20 pb-2">
+                      <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-5 rounded-2xl shadow-2xl space-y-4">
+                        <div className="flex items-center gap-2 border-b border-zinc-800 pb-2">
                           <Ticket className="w-5 h-5 text-amber-500" />
                           <h3 className="font-serif font-black text-amber-400 text-sm uppercase tracking-widest flex-1">
-                            Screening History
+                            Watched History
                           </h3>
                           <span className="bg-amber-500/20 text-amber-400 text-[10px] font-black font-mono px-2 py-0.5 rounded-full uppercase border border-amber-500/20">
-                            {watchedMovies.length} Screened
+                            {watchedMovies.length} Watched
                           </span>
                         </div>
                         
                         {watchedMovies.length === 0 ? (
-                          <p className="text-stone-400 text-xs italic font-medium font-serif">No movies have been screened yet in this room.</p>
+                          <p className="text-zinc-400 text-xs italic font-medium font-serif">No movies have been watched yet in this room.</p>
                         ) : (
                           <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
                             {watchedMovies.map((movie) => (
-                              <div key={movie.id} className="flex gap-3 bg-stone-900/50 p-2 rounded-xl border border-amber-500/10 group relative hover:border-amber-500/30 transition-all">
+                              <div key={movie.id} className="flex gap-3 bg-zinc-950 p-2 rounded-xl border border-zinc-850 group relative hover:border-amber-500/30 transition-all">
                                 <img
                                   src={movie.poster}
                                   alt={movie.title}
@@ -1756,14 +1751,14 @@ export default function App() {
                                     <span>{movie.year}</span>
                                     {movie.director && <span className="truncate max-w-[100px] inline-block align-bottom"> • Dir: {movie.director}</span>}
                                   </div>
-                                  <div className="text-[9px] text-stone-400 font-medium truncate">
-                                    Screened on: {movie.releasedAt ? new Date(movie.releasedAt).toLocaleDateString() : 'N/A'}
+                                  <div className="text-[9px] text-zinc-400 font-medium truncate">
+                                    Watched on: {movie.watchedAt ? new Date((movie.watchedAt.seconds || movie.watchedAt._seconds || 0) * 1000 || movie.watchedAt).toLocaleDateString() : 'Recently'}
                                   </div>
                                 </div>
                                 {isAdminOfRoom && (
                                   <button
                                     onClick={() => handleDeleteWatchedMovie(movie.id)}
-                                    className="absolute top-2 right-2 p-1 text-stone-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    className="absolute top-2 right-2 p-1 text-zinc-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
                                     title="Delete from watched history"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -1779,8 +1774,8 @@ export default function App() {
                     {/* RIGHT PANEL: Dynamic Collaborative Suggestions and Debates */}
                     <div className="lg:col-span-8 space-y-6">
                       {/* TABS SELECTOR */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-amber-500/20 pb-4 gap-4">
-                        <div className="flex items-center gap-1.5 bg-stone-900/60 p-1 rounded-xl border border-amber-500/15">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-zinc-800 pb-4 gap-4">
+                        <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
                           <button
                             onClick={() => {
                               setActiveTab("active");
@@ -1788,12 +1783,12 @@ export default function App() {
                             }}
                             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
                               activeTab === "active"
-                                ? "bg-amber-500 text-red-950 shadow-md"
-                                : "text-amber-400/80 hover:text-amber-300"
+                                ? "bg-amber-500 text-black shadow-md"
+                                : "text-amber-400 hover:text-amber-300"
                             }`}
                           >
                             <Vote className="w-4 h-4 text-current" />
-                            Active Nominees ({movieSuggestions.length})
+                            Active Suggestions ({movieSuggestions.length})
                           </button>
                           <button
                             onClick={() => {
@@ -1802,15 +1797,15 @@ export default function App() {
                             }}
                             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-all ${
                               activeTab === "watched"
-                                ? "bg-amber-500 text-red-950 shadow-md"
-                                : "text-amber-400/80 hover:text-amber-300"
+                                ? "bg-amber-500 text-black shadow-md"
+                                : "text-amber-400 hover:text-amber-300"
                             }`}
                           >
                             <Check className="w-4 h-4 text-current" />
                             Full Archive ({watchedMovies.length})
                           </button>
                         </div>
-                        <span className="text-[10px] bg-red-950/40 border border-amber-500/30 text-amber-400 font-black font-mono px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md self-start sm:self-auto">
+                        <span className="text-[10px] bg-zinc-900/50 border border-zinc-800 text-amber-400 font-black font-mono px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md self-start sm:self-auto">
                           Real-time Synced
                         </span>
                       </div>
@@ -1818,11 +1813,11 @@ export default function App() {
                       {activeTab === "active" ? (
                         /* ACTIVE NOMINEES VIEW */
                         movieSuggestions.length === 0 ? (
-                          <div className="text-center py-20 bg-rose-950/20 rounded-2xl border border-dashed border-amber-500/20 p-8 space-y-3 shadow-xl">
+                          <div className="text-center py-20 bg-zinc-900/30 rounded-2xl border border-dashed border-zinc-800 p-8 space-y-3 shadow-xl">
                             <Film className="w-10 h-10 text-amber-500/40 mx-auto" />
-                            <h4 className="font-serif font-black text-amber-400 text-sm uppercase tracking-wider">No Nominated Films</h4>
-                            <p className="text-stone-300 text-xs max-w-sm mx-auto font-medium font-serif italic">
-                              Be the first to search and suggest a movie above to get the collaborative screenings rolling!
+                            <h4 className="font-serif font-black text-amber-400 text-sm uppercase tracking-wider">No Movie Suggestions</h4>
+                            <p className="text-zinc-400 text-xs max-w-sm mx-auto font-medium font-serif italic">
+                              Be the first to search and suggest a movie above to get the voting rolling!
                             </p>
                           </div>
                         ) : (
@@ -1846,28 +1841,28 @@ export default function App() {
                                     className={`border rounded-2xl overflow-hidden transition-all flex flex-col relative ${
                                       isGoldHighlighted 
                                         ? "border-amber-400 bg-amber-950/40 ring-4 ring-amber-400/30 shadow-2xl" 
-                                        : "bg-[#1c120c]/60 border-amber-500/10 shadow-xl hover:border-amber-500/20"
+                                        : "bg-zinc-900/40 border-zinc-800 shadow-xl hover:border-zinc-700/60"
                                     }`}
                                   >
                                     {isGoldHighlighted && (
-                                      <div className="bg-gradient-to-r from-[#2c0000] via-amber-600 to-[#2c0000] text-amber-100 font-serif font-black text-xs uppercase tracking-widest px-4 py-2 text-center border-b border-amber-400 flex items-center justify-center gap-2 shadow-inner">
+                                      <div className="bg-gradient-to-r from-amber-950/40 via-amber-600/20 to-amber-950/40 text-amber-100 font-serif font-black text-xs uppercase tracking-widest px-4 py-2 text-center border-b border-amber-400/50 flex items-center justify-center gap-2 shadow-inner">
                                         <Sparkles className="w-4 h-4 animate-pulse text-amber-300" />
-                                        <span>Next Screening Choice</span>
+                                        <span>Next Movie Selected</span>
                                         <Sparkles className="w-4 h-4 animate-pulse text-amber-300" />
                                       </div>
                                     )}
 
                                     {/* MOVIE BASIC HEADER DETAILS */}
-                                    <div className="p-5 flex flex-col sm:flex-row gap-5 border-b border-amber-500/10 bg-stone-950/60">
+                                    <div className="p-5 flex flex-col sm:flex-row gap-5 border-b border-zinc-800 bg-zinc-950/60">
                                       <img
                                         src={movie.poster}
                                         alt={movie.title}
-                                        className="w-24 h-36 sm:w-20 sm:h-28 object-cover rounded-xl shadow-md border border-amber-500/20 bg-stone-950 shrink-0 mx-auto sm:mx-0"
+                                        className="w-24 h-36 sm:w-20 sm:h-28 object-cover rounded-xl shadow-md border border-zinc-800 bg-zinc-950 shrink-0 mx-auto sm:mx-0"
                                         referrerPolicy="no-referrer"
                                       />
                                       <div className="space-y-1.5 flex-1 text-center sm:text-left min-w-0">
                                         {editingMovieId === movie.id ? (
-                                          <div className="space-y-3 bg-stone-900 p-4 rounded-xl border border-amber-500/20 shadow-sm">
+                                          <div className="space-y-3 bg-zinc-900 p-4 rounded-xl border border-zinc-800 shadow-sm">
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                               <div>
                                                 <label className="block text-[9px] font-extrabold text-amber-400 uppercase tracking-wider mb-1">Movie Title</label>
@@ -1875,7 +1870,7 @@ export default function App() {
                                                   type="text"
                                                   value={editTitle}
                                                   onChange={(e) => setEditTitle(e.target.value)}
-                                                  className="w-full bg-stone-950 text-amber-100 border border-amber-500/20 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
+                                                  className="w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
                                                 />
                                               </div>
                                               <div>
@@ -1884,7 +1879,7 @@ export default function App() {
                                                   type="text"
                                                   value={editYear}
                                                   onChange={(e) => setEditYear(e.target.value)}
-                                                  className="w-full bg-stone-950 text-amber-100 border border-amber-500/20 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
+                                                  className="w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
                                                 />
                                               </div>
                                             </div>
@@ -1896,7 +1891,7 @@ export default function App() {
                                                   type="text"
                                                   value={editDirector}
                                                   onChange={(e) => setEditDirector(e.target.value)}
-                                                  className="w-full bg-stone-950 text-amber-100 border border-amber-500/20 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
+                                                  className="w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
                                                 />
                                               </div>
                                               <div>
@@ -1906,7 +1901,7 @@ export default function App() {
                                                   value={editGenresText}
                                                   onChange={(e) => setEditGenresText(e.target.value)}
                                                   placeholder="e.g. Drama, Sci-Fi"
-                                                  className="w-full bg-stone-950 text-amber-100 border border-amber-500/20 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
+                                                  className="w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-extrabold"
                                                 />
                                               </div>
                                             </div>
@@ -1917,20 +1912,20 @@ export default function App() {
                                                 value={editDescription}
                                                 onChange={(e) => setEditDescription(e.target.value)}
                                                 rows={3}
-                                                className="w-full bg-stone-950 text-amber-100 border border-amber-500/20 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-medium"
+                                                className="w-full bg-zinc-950 text-zinc-100 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-amber-400 font-medium"
                                               />
                                             </div>
 
                                             <div className="flex gap-2 pt-1 justify-end">
                                               <button
                                                 onClick={() => handleUpdateMovieSuggestion(movie.id)}
-                                                className="bg-amber-500 hover:bg-amber-600 text-red-950 font-black px-3 py-1.5 rounded-lg text-[11px] transition-colors shadow-sm"
+                                                className="bg-amber-500 hover:bg-amber-600 text-black font-black px-3 py-1.5 rounded-lg text-[11px] transition-colors shadow-sm"
                                               >
                                                 Save Details
                                               </button>
                                               <button
                                                 onClick={() => setEditingMovieId(null)}
-                                                className="bg-stone-900 hover:bg-stone-800 text-stone-300 font-bold px-3 py-1.5 rounded-lg text-[11px] transition-colors border border-amber-500/20"
+                                                className="bg-zinc-950 hover:bg-zinc-900 text-zinc-350 font-bold px-3 py-1.5 rounded-lg text-[11px] transition-colors border border-zinc-800"
                                               >
                                                 Cancel
                                               </button>
@@ -1942,18 +1937,18 @@ export default function App() {
                                               <div className="space-y-1 min-w-0 flex-1">
                                                 <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
                                                   <span className="font-mono text-[10px] text-amber-400 font-black uppercase bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                                                    #{index + 1} Nominee
+                                                    #{index + 1} Choice
                                                   </span>
-                                                  <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider">
+                                                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
                                                     Suggested by: {movie.suggestedBy}
                                                   </span>
                                                 </div>
                                                 <h3 className="text-lg sm:text-xl font-serif font-black text-amber-100 leading-tight uppercase tracking-wider truncate">
-                                                  {movie.title} <span className="text-stone-400 font-normal font-sans">({movie.year})</span>
+                                                  {movie.title} <span className="text-zinc-500 font-normal font-sans">({movie.year})</span>
                                                 </h3>
 
                                                 {/* Director, Genres & Trailer Link */}
-                                                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 pt-1 pb-1 text-[11px] text-stone-300 font-medium">
+                                                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 pt-1 pb-1 text-[11px] text-zinc-300 font-medium">
                                                   {movie.director && <span>Dir: {movie.director}</span>}
                                                   {movie.director && movie.genres && movie.genres.length > 0 && <span className="text-amber-500/30">&bull;</span>}
                                                   {movie.genres && movie.genres.length > 0 && (
@@ -1979,20 +1974,30 @@ export default function App() {
                                               </div>
 
                                               {/* VOTE TRIGGER BUTTON */}
-                                              <button
-                                                onClick={() => handleToggleVote(movie)}
-                                                className={`sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2.5 rounded-xl border transition-all shadow-md active:scale-95 shrink-0 ${
-                                                  hasVoted 
-                                                    ? "bg-amber-500 text-red-950 border-amber-400" 
-                                                    : "bg-[#1c120c] hover:bg-stone-900 text-amber-300 border-amber-500/20 hover:border-amber-400"
-                                                }`}
-                                              >
-                                                <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-red-950" : "text-amber-400"}`} />
-                                                <span>{movie.voterIds?.length || 0} Votes</span>
-                                              </button>
+                                              {isGoldHighlighted ? (
+                                                <div
+                                                  className="sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 shadow-md shrink-0 font-serif uppercase tracking-wider"
+                                                  title="Voting is frozen for this choice"
+                                                >
+                                                  <Lock className="w-4 h-4 text-amber-400" />
+                                                  <span>{movie.voterIds?.length || 0} Votes (Locked)</span>
+                                                </div>
+                                              ) : (
+                                                <button
+                                                  onClick={() => handleToggleVote(movie)}
+                                                  className={`sm:self-start flex items-center justify-center gap-2 font-black text-xs px-4 py-2.5 rounded-xl border transition-all shadow-md active:scale-95 shrink-0 ${
+                                                    hasVoted 
+                                                      ? "bg-amber-500 text-black border-amber-400" 
+                                                      : "bg-zinc-950 hover:bg-zinc-900 text-amber-300 border-zinc-800 hover:border-zinc-700"
+                                                  }`}
+                                                >
+                                                  <Vote className={`w-4 h-4 ${hasVoted ? "animate-bounce text-black" : "text-amber-400"}`} />
+                                                  <span>{movie.voterIds?.length || 0} Votes</span>
+                                                </button>
+                                              )}
                                             </div>
 
-                                            <p className="text-stone-300 text-xs leading-relaxed line-clamp-3 font-medium font-serif italic">
+                                            <p className="text-zinc-300 text-xs leading-relaxed line-clamp-3 font-medium font-serif italic">
                                               {movie.description}
                                             </p>
 
@@ -2001,7 +2006,7 @@ export default function App() {
                                               const embedUrl = getYoutubeEmbedUrl(movie.trailerUrl);
                                               if (embedUrl) {
                                                 return (
-                                                  <div className="mt-3 overflow-hidden rounded-xl border border-amber-500/20 bg-stone-950 shadow-inner relative aspect-video w-full max-w-2xl mx-auto">
+                                                  <div className="mt-3 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-inner relative aspect-video w-full max-w-2xl mx-auto">
                                                     <iframe
                                                       src={embedUrl}
                                                       title={`${movie.title} Trailer`}
@@ -2052,22 +2057,22 @@ export default function App() {
                                     </div>
 
                                     {/* PROS & CONS TRICIDER ARGUMENTS VIEW */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100 bg-slate-50/50">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-zinc-850 bg-zinc-950/20 border-t border-zinc-850">
                                       {/* PROS COLUMN (GREEN) */}
                                       <div className="p-4 space-y-3">
-                                        <div className="flex items-center gap-1.5 text-emerald-600 font-extrabold text-xs uppercase tracking-wider">
+                                        <div className="flex items-center gap-1.5 text-emerald-400 font-extrabold text-xs uppercase tracking-wider">
                                           <Smile className="w-4 h-4" />
                                           <span>Pros / Arguments In Favor ({movie.pros?.length || 0})</span>
                                         </div>
 
                                         <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                                           {(!movie.pros || movie.pros.length === 0) ? (
-                                            <p className="text-[10px] text-slate-500 italic font-medium">No pro arguments added yet.</p>
+                                            <p className="text-[10px] text-zinc-500 italic font-medium">No pro arguments added yet.</p>
                                           ) : (
                                             movie.pros.map((pro) => (
-                                              <div key={pro.id} className="bg-emerald-50 border border-emerald-100 p-2.5 rounded-lg space-y-1 relative group">
-                                                <p className="text-slate-700 text-xs leading-relaxed pr-6 font-medium">{pro.text}</p>
-                                                <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                                              <div key={pro.id} className="bg-emerald-950/20 border border-emerald-900/30 p-2.5 rounded-lg space-y-1 relative group">
+                                                <p className="text-zinc-200 text-xs leading-relaxed pr-6 font-medium">{pro.text}</p>
+                                                <div className="flex items-center justify-between text-[9px] text-zinc-500 font-bold uppercase tracking-wider">
                                                   <span>&mdash; {pro.author}</span>
                                                   {(pro.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
                                                     <button
@@ -2085,7 +2090,7 @@ export default function App() {
                                         </div>
 
                                         {/* Inline Add Pro Form */}
-                                        <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                                        <div className="flex items-center gap-2 pt-2 border-t border-zinc-850">
                                           <input
                                             type="text"
                                             placeholder="Why suggest this?"
@@ -2097,7 +2102,7 @@ export default function App() {
                                             onKeyDown={(e) => {
                                               if (e.key === "Enter") handleAddArgument(movie.id);
                                             }}
-                                            className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-500 placeholder-slate-400 font-medium"
+                                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-emerald-500/50 placeholder-zinc-500 font-medium"
                                           />
                                           <button
                                             onClick={() => {
@@ -2108,7 +2113,7 @@ export default function App() {
                                               }));
                                               setTimeout(() => handleAddArgument(movie.id), 20);
                                             }}
-                                            className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 p-2 rounded-lg text-emerald-600 transition-all active:scale-95 shrink-0"
+                                            className="bg-emerald-950/30 hover:bg-emerald-900/40 border border-emerald-800 p-2 rounded-lg text-emerald-400 transition-all active:scale-95 shrink-0"
                                             title="Add pro argument"
                                           >
                                             <Plus className="w-3.5 h-3.5" />
@@ -2118,19 +2123,19 @@ export default function App() {
 
                                       {/* CONS COLUMN (RED) */}
                                       <div className="p-4 space-y-3">
-                                        <div className="flex items-center gap-1.5 text-rose-600 font-extrabold text-xs uppercase tracking-wider">
+                                        <div className="flex items-center gap-1.5 text-rose-400 font-extrabold text-xs uppercase tracking-wider">
                                           <Frown className="w-4 h-4" />
                                           <span>Cons / Arguments Against ({movie.cons?.length || 0})</span>
                                         </div>
 
                                         <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                                           {(!movie.cons || movie.cons.length === 0) ? (
-                                            <p className="text-[10px] text-slate-500 italic font-medium">No con arguments added yet.</p>
+                                            <p className="text-[10px] text-zinc-500 italic font-medium">No con arguments added yet.</p>
                                           ) : (
                                             movie.cons.map((con) => (
-                                              <div key={con.id} className="bg-rose-50 border border-rose-100 p-2.5 rounded-lg space-y-1 relative group">
-                                                <p className="text-slate-700 text-xs leading-relaxed pr-6 font-medium">{con.text}</p>
-                                                <div className="flex items-center justify-between text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                                              <div key={con.id} className="bg-rose-950/20 border border-rose-900/30 p-2.5 rounded-lg space-y-1 relative group text-zinc-100">
+                                                <p className="text-zinc-200 text-xs leading-relaxed pr-6 font-medium">{con.text}</p>
+                                                <div className="flex items-center justify-between text-[9px] text-zinc-500 font-bold uppercase tracking-wider">
                                                   <span>&mdash; {con.author}</span>
                                                   {(con.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid) && (
                                                     <button
@@ -2148,7 +2153,7 @@ export default function App() {
                                         </div>
 
                                         {/* Inline Add Con Form */}
-                                        <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                                        <div className="flex items-center gap-2 pt-2 border-t border-zinc-850">
                                           <input
                                             type="text"
                                             placeholder="Any reservations?"
@@ -2160,7 +2165,7 @@ export default function App() {
                                             onKeyDown={(e) => {
                                               if (e.key === "Enter") handleAddArgument(movie.id);
                                             }}
-                                            className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-rose-500 placeholder-slate-400 font-medium"
+                                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-rose-500/50 placeholder-zinc-500 font-medium"
                                           />
                                           <button
                                             onClick={() => {
@@ -2171,7 +2176,7 @@ export default function App() {
                                               }));
                                               setTimeout(() => handleAddArgument(movie.id), 20);
                                             }}
-                                            className="bg-rose-50 hover:bg-rose-100 border border-rose-200 p-2 rounded-lg text-rose-600 transition-all active:scale-95 shrink-0"
+                                            className="bg-rose-950/30 hover:bg-rose-900/40 border border-rose-800 p-2 rounded-lg text-rose-400 transition-all active:scale-95 shrink-0"
                                             title="Add con argument"
                                           >
                                             <Plus className="w-3.5 h-3.5" />
@@ -2192,7 +2197,7 @@ export default function App() {
                             <Check className="w-10 h-10 text-amber-500/40 mx-auto" />
                             <h4 className="font-serif font-black text-amber-400 text-sm uppercase tracking-wider">No Archive Logs Yet</h4>
                             <p className="text-stone-300 text-xs max-w-sm mx-auto font-medium font-serif italic">
-                              Once a screening countdown finishes, the highest-voted film nominee is automatically moved and recorded inside this archive.
+                              Once a countdown finishes, the highest-voted movie is automatically moved and recorded inside this archive.
                             </p>
                           </div>
                         ) : (
