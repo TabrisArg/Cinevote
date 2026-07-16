@@ -189,7 +189,20 @@ export default function App() {
     const handleHashChange = () => {
       const hash = window.location.hash;
       if (hash.startsWith("#/list/")) {
-        const listId = hash.replace("#/list/", "");
+        let listId = hash.replace("#/list/", "");
+        
+        // Safety check: if listId contains a full URL, extract the ID
+        if (listId.includes("#/list/")) {
+          const parts = listId.split("#/list/");
+          listId = parts[parts.length - 1];
+        } else if (listId.includes("/list/")) {
+          const parts = listId.split("/list/");
+          listId = parts[parts.length - 1];
+        }
+        
+        // Remove trailing query params or slashes
+        listId = listId.split("?")[0].replace(/\/+$/, "");
+        
         setCurrentRoute({ path: "list", listId });
       } else {
         setCurrentRoute({ path: "dashboard" });
@@ -944,8 +957,27 @@ export default function App() {
   // Handle manually joining a list room ID
   const handleJoinRoom = (e: FormEvent) => {
     e.preventDefault();
-    if (!joinRoomId.trim()) return;
-    window.location.hash = `#/list/${joinRoomId.trim()}`;
+    const input = joinRoomId.trim();
+    if (!input) return;
+    
+    let targetId = input;
+    // If they pasted a full URL, let's extract the list ID safely
+    if (input.includes("#/list/")) {
+      const parts = input.split("#/list/");
+      if (parts.length > 1) {
+        targetId = parts[1].split("?")[0];
+      }
+    } else if (input.includes("/list/")) {
+      const parts = input.split("/list/");
+      if (parts.length > 1) {
+        targetId = parts[1].split("?")[0];
+      }
+    }
+    
+    // Clean trailing slashes if any
+    targetId = targetId.replace(/\/+$/, "");
+    
+    window.location.hash = `#/list/${targetId}`;
     setJoinRoomId("");
   };
 
@@ -1118,7 +1150,7 @@ export default function App() {
               {/* THREE-STEP WORKFLOW CARDS */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="ticket-stub border border-amber-500/20 p-6 rounded-2xl space-y-3 shadow-xl relative overflow-hidden group hover:scale-[1.02] transition-all duration-300">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full pointer-events-none" />
                   <div className="w-10 h-10 bg-amber-500 text-black font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-md">
                     01
                   </div>
@@ -1128,7 +1160,7 @@ export default function App() {
                   </p>
                 </div>
                 <div className="ticket-stub border border-amber-500/20 p-6 rounded-2xl space-y-3 shadow-xl relative overflow-hidden group hover:scale-[1.02] transition-all duration-300">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full pointer-events-none" />
                   <div className="w-10 h-10 bg-amber-500 text-black font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-md">
                     02
                   </div>
@@ -1138,7 +1170,7 @@ export default function App() {
                   </p>
                 </div>
                 <div className="ticket-stub border border-amber-500/20 p-6 rounded-2xl space-y-3 shadow-xl relative overflow-hidden group hover:scale-[1.02] transition-all duration-300">
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full pointer-events-none" />
                   <div className="w-10 h-10 bg-amber-500 text-black font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-md">
                     03
                   </div>
@@ -1350,7 +1382,7 @@ export default function App() {
                  <div className="space-y-8">
                   {/* ROOM HEADER / ACTION LINE */}
                   <div className="bg-zinc-900/50 backdrop-blur-md border border-zinc-800 p-6 rounded-2xl shadow-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full" />
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-amber-500/5 to-transparent rounded-full pointer-events-none" />
                     
                     <div className="space-y-2 flex-1">
                       <button 
@@ -1378,10 +1410,23 @@ export default function App() {
                     <div className="flex items-center gap-3 w-full md:w-auto shrink-0 border-t md:border-t-0 pt-4 md:pt-0 border-zinc-800">
                       <button 
                         onClick={copyInviteLink}
-                        className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2.5 rounded-xl text-xs transition-all shadow-md active:scale-95 border border-amber-400"
+                        className={`flex-1 md:flex-none flex items-center justify-center gap-2 font-black px-4 py-2.5 rounded-xl text-xs transition-all shadow-md active:scale-95 border ${
+                          copiedNotification 
+                            ? "bg-emerald-500 hover:bg-emerald-600 text-black border-emerald-400" 
+                            : "bg-amber-500 hover:bg-amber-600 text-black border-amber-400"
+                        }`}
                       >
-                        <Share2 className="w-4 h-4 text-black" />
-                        Copy Invite Link
+                        {copiedNotification ? (
+                          <>
+                            <Check className="w-4 h-4 text-black stroke-[3]" />
+                            <span>Invite Link Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Share2 className="w-4 h-4 text-black" />
+                            <span>Copy Invite Link</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>
@@ -1437,7 +1482,7 @@ export default function App() {
                         ? "bg-amber-950/40 border-amber-500/40 ring-1 ring-amber-400/20" 
                         : "bg-zinc-900/40 border-zinc-800"
                     }`}>
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-full" />
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-full pointer-events-none" />
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
