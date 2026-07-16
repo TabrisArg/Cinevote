@@ -136,7 +136,7 @@ export async function fetchMoviesFromTMDB(query: string): Promise<MovieResult[]>
     const detailedMovies = await Promise.all(
       candidates.map(async (movie: any) => {
         try {
-          const detailUrl = `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${encodeURIComponent(TMDB_API_KEY)}&append_to_response=credits&language=en-US`;
+          const detailUrl = `https://api.themoviedb.org/3/movie/${movie.id}?api_key=${encodeURIComponent(TMDB_API_KEY)}&append_to_response=videos,credits&language=en-US`;
           const detailRes = await fetch(detailUrl);
           if (!detailRes.ok) {
             return null;
@@ -163,7 +163,15 @@ export async function fetchMoviesFromTMDB(query: string): Promise<MovieResult[]>
             ? `https://image.tmdb.org/t/p/w500${posterPath}` 
             : "https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=400&auto=format&fit=crop";
 
-          const trailerUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(title + " " + year + " official trailer")}`;
+          // Find YouTube trailer key if available
+          const videosList = detailData.videos?.results || [];
+          const youtubeTrailer = videosList.find(
+            (v: any) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
+          ) || videosList.find((v: any) => v.site === "YouTube");
+
+          const trailerUrl = youtubeTrailer
+            ? `https://www.youtube.com/watch?v=${youtubeTrailer.key}`
+            : `https://www.youtube.com/results?search_query=${encodeURIComponent(title + " " + year + " official trailer")}`;
 
           return {
             title,

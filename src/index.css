@@ -1,30 +1,91 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", Georgia, Cambria, "Times New Roman", Times, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
 body {
-  background-color: #f8fafc;
-  color: #0f172a;
+  background-color: #1a0508; /* Deep rich velvet burgundy base */
+  color: #ede9d5; /* Antique cream text */
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* Custom scrollbar styling */
+/* Vintage Theatre Wallpaper Pattern (Art Deco inspired) */
+.theatre-pattern {
+  background-color: #1a0508;
+  background-image: radial-gradient(circle at 100% 150%, #2a0a0e 24%, #1a0508 24%, #1a0508 28%, #2a0a0e 28%, #2a0a0e 36%, #1a0508 36%, #1a0508 40%, transparent 40%, transparent),
+                    radial-gradient(circle at 0% 150%, #2a0a0e 24%, #1a0508 24%, #1a0508 28%, #2a0a0e 28%, #2a0a0e 36%, #1a0508 36%, #1a0508 40%, transparent 40%, transparent),
+                    radial-gradient(circle at 50% 100%, #2a0a0e 10%, #1a0508 10%, #1a0508 14%, #2a0a0e 14%, #2a0a0e 18%, #1a0508 18%, #1a0508 22%, transparent 22%, transparent);
+  background-size: 40px 20px;
+}
+
+/* Marquee Light Glow Effect */
+.marquee-glow {
+  text-shadow: 0 0 10px rgba(253, 186, 116, 0.6), 0 0 20px rgba(217, 119, 6, 0.4);
+}
+
+.marquee-border {
+  background-image: radial-gradient(circle, #fcd34d 2px, transparent 3px);
+  background-size: 12px 12px;
+}
+
+/* Ticket Stub Cutout Styling */
+.ticket-stub {
+  position: relative;
+  background: #ede9d5;
+  color: #2b1b11;
+}
+
+.ticket-stub::before, .ticket-stub::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  background: #1a0508;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+}
+
+.ticket-stub::before {
+  left: -8px;
+}
+
+.ticket-stub::after {
+  right: -8px;
+}
+
+/* Velvet rope gradient */
+.velvet-rope {
+  background: repeating-linear-gradient(
+    45deg,
+    #7f1d1d,
+    #7f1d1d 10px,
+    #991b1b 10px,
+    #991b1b 20px,
+    #b91c1c 20px,
+    #b91c1c 30px
+  );
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+}
+
+/* Custom scrollbar styling for theatre theme */
 ::-webkit-scrollbar {
   width: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: #1a0508;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #d4af37;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #fcd34d;
 }
 

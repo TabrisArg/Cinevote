@@ -8,6 +8,7 @@ export interface VotingList {
   createdAt: any; // Firestore Timestamp
   releaseTime?: string; // ISO string representing scheduled release countdown
   lastReleasedMovieId?: string;
+  rules?: string;
 }
 
 export interface Argument {
