@@ -5,7 +5,8 @@ import { RepeatingSchedule } from "../types";
  */
 export function validateStartDate(startDateStr: string, selectedDays: number[]): boolean {
   if (!startDateStr || !selectedDays || selectedDays.length === 0) return false;
-  const [year, month, day] = startDateStr.split("-").map(Number);
+  const datePart = startDateStr.split("T")[0];
+  const [year, month, day] = datePart.split("-").map(Number);
   const date = new Date(year, month - 1, day);
   const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
   return selectedDays.includes(dayOfWeek);
@@ -18,12 +19,22 @@ export function calculateUpcomingOccurrences(schedule: RepeatingSchedule, limit:
   const { selectedDays, frequencyValue, frequencyUnit, startDate } = schedule;
   if (!selectedDays || selectedDays.length === 0 || !startDate) return [];
 
-  const [sYear, sMonth, sDay] = startDate.split("-").map(Number);
+  const datePart = startDate.split("T")[0];
+  const [sYear, sMonth, sDay] = datePart.split("-").map(Number);
   const startLocal = new Date(sYear, sMonth - 1, sDay);
   
-  const now = new Date();
-  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Parse hours and minutes from starting date if present to preserve exact time
+  let hours = 0;
+  let minutes = 0;
+  if (startDate.includes("T")) {
+    const timePart = startDate.split("T")[1];
+    const [h, m] = timePart.split(":").map(Number);
+    if (!isNaN(h)) hours = h;
+    if (!isNaN(m)) minutes = m;
+  }
+  startLocal.setHours(hours, minutes, 0, 0);
 
+  const now = new Date();
   const occurrences: Date[] = [];
   let current = new Date(startLocal);
 
@@ -57,7 +68,7 @@ export function calculateUpcomingOccurrences(schedule: RepeatingSchedule, limit:
         }
       }
 
-      if (isMatch && current >= todayLocal) {
+      if (isMatch && current.getTime() > now.getTime()) {
         occurrences.push(new Date(current));
       }
     }

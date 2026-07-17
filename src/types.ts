@@ -17,6 +17,7 @@ export interface VotingList {
   lastReleasedMovieId?: string;
   rules?: string;
   repeatingSchedule?: RepeatingSchedule;
+  coOwners?: string[];
 }
 
 export interface Argument {
@@ -50,4 +51,5 @@ export interface MovieSuggestion {
   director?: string;
   genres?: string[];
   trailerUrl?: string;
+  tmdbId?: string | number;
 }

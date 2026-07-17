@@ -493,7 +493,8 @@ app.get("/api/movies/search", async (req, res) => {
             director,
             genres,
             poster,
-            trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(title + " " + year + " official trailer")}`
+            trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(title + " " + year + " official trailer")}`,
+            tmdbId: movie.id
           };
         } catch (detailErr) {
           console.error(`Failed to fetch TMDB details for Movie ID ${movie.id}:`, detailErr);
@@ -508,7 +509,8 @@ app.get("/api/movies/search", async (req, res) => {
             poster: movie.poster_path
               ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
               : "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&auto=format&fit=crop",
-            trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + year + " official trailer")}`
+            trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + year + " official trailer")}`,
+            tmdbId: movie.id
           };
         }
       })

@@ -6,6 +6,7 @@ export interface MovieResult {
   genres: string[];
   poster: string;
   trailerUrl?: string;
+  tmdbId?: string | number;
 }
 
 const TMDB_API_KEY = "599d9925eb94b5ad1025189ed23ab847";
@@ -180,7 +181,8 @@ export async function fetchMoviesFromTMDB(query: string): Promise<MovieResult[]>
             description,
             genres,
             poster,
-            trailerUrl
+            trailerUrl,
+            tmdbId: movie.id
           };
         } catch (err) {
           console.error(`Error fetching TMDB detail for ${movie.id}:`, err);

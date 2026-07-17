@@ -61,6 +61,7 @@ export default function App() {
   // Session & Alias Info
   const [sessionId, setSessionId] = useState("");
   const [alias, setAlias] = useState("");
+  const [aliasConfigured, setAliasConfigured] = useState(() => localStorage.getItem("cinevote_alias_configured") === "true");
   const [isEditingAlias, setIsEditingAlias] = useState(false);
   const [tempAlias, setTempAlias] = useState("");
 
@@ -82,7 +83,7 @@ export default function App() {
   const [movieSuggestions, setMovieSuggestions] = useState<MovieSuggestion[]>([]);
   const [watchedMovies, setWatchedMovies] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"active" | "watched">("active");
-  const [timeLeft, setTimeLeft] = useState<{ hours: number; minutes: number; seconds: number; isFrozen: boolean; isOver: boolean } | null>(null);
+  const [timeLeft, setTimeLeft] = useState<{ months: number; weeks: number; days: number; hours: number; minutes: number; seconds: number; isFrozen: boolean; isOver: boolean } | null>(null);
   const [loadingActiveList, setLoadingActiveList] = useState(false);
 
   // Movie Search State (Suggestion Form)
@@ -126,6 +127,13 @@ export default function App() {
   // Room Rules State
   const [isEditingRules, setIsEditingRules] = useState(false);
   const [rulesInput, setRulesInput] = useState("");
+
+  // Co-Owners State
+  const [newCoOwnerEmail, setNewCoOwnerEmail] = useState("");
+  const [isAddingCoOwner, setIsAddingCoOwner] = useState(false);
+
+  // Curtains Animation State
+  const [openedCurtains, setOpenedCurtains] = useState<Record<string, boolean>>({});
 
   // UI Notification Toasts
   const [copiedNotification, setCopiedNotification] = useState(false);
@@ -191,6 +199,14 @@ export default function App() {
     const unsubscribeAuth = auth.onAuthStateChanged((firebaseUser) => {
       setUser(firebaseUser);
       setAuthLoading(false);
+      if (firebaseUser) {
+        const displayName = firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "Movie Buff";
+        localStorage.setItem("cinevote_alias", displayName);
+        localStorage.setItem("cinevote_alias_configured", "true");
+        setAlias(displayName);
+        setTempAlias(displayName);
+        setAliasConfigured(true);
+      }
     });
 
     // Capture redirect sign-in result (important fallback for Netlify COOP issues)
@@ -431,7 +447,8 @@ export default function App() {
         voterIds: topMovie.voterIds || [],
         votersHistory: topMovie.votersHistory || [],
         watchedAt: serverTimestamp(),
-        originalMovieId: topMovie.id
+        originalMovieId: topMovie.id,
+        tmdbId: topMovie.tmdbId || ""
       });
 
       // 3. Delete from active movies
@@ -457,14 +474,65 @@ export default function App() {
       const difference = deadline - now;
 
       if (difference <= 0) {
-        setTimeLeft({ hours: 0, minutes: 0, seconds: 0, isFrozen: true, isOver: true });
+        setTimeLeft({ months: 0, weeks: 0, days: 0, hours: 0, minutes: 0, seconds: 0, isFrozen: true, isOver: true });
         triggerReleaseTransition();
       } else {
-        const totalHours = Math.floor(difference / (1000 * 60 * 60));
-        const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
-        const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+        const nowDate = new Date(now);
+
+        // Precise calendar calculation
+        let tempDate = new Date(nowDate);
+        let m = 0;
+        while (true) {
+          let nextTemp = new Date(tempDate);
+          nextTemp.setMonth(nextTemp.getMonth() + 1);
+          if (nextTemp.getTime() <= deadline) {
+            m++;
+            tempDate = nextTemp;
+          } else {
+            break;
+          }
+        }
+        
+        let w = 0;
+        while (true) {
+          let nextTemp = new Date(tempDate);
+          nextTemp.setDate(nextTemp.getDate() + 7);
+          if (nextTemp.getTime() <= deadline) {
+            w++;
+            tempDate = nextTemp;
+          } else {
+            break;
+          }
+        }
+
+        let d = 0;
+        while (true) {
+          let nextTemp = new Date(tempDate);
+          nextTemp.setDate(nextTemp.getDate() + 1);
+          if (nextTemp.getTime() <= deadline) {
+            d++;
+            tempDate = nextTemp;
+          } else {
+            break;
+          }
+        }
+
+        const remainingMs = deadline - tempDate.getTime();
+        const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+        const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((remainingMs % (1000 * 60)) / 1000);
         const isFrozen = difference <= 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-        setTimeLeft({ hours: totalHours, minutes, seconds, isFrozen, isOver: false });
+
+        setTimeLeft({ 
+          months: m, 
+          weeks: w, 
+          days: d, 
+          hours, 
+          minutes, 
+          seconds, 
+          isFrozen, 
+          isOver: false 
+        });
       }
     };
 
@@ -653,7 +721,8 @@ export default function App() {
           }
         ],
         pros: [],
-        cons: []
+        cons: [],
+        tmdbId: selectedMovie.tmdbId || ""
       });
 
       // Reset
@@ -711,7 +780,8 @@ export default function App() {
         suggestedBy: user?.displayName || "Admin",
         suggestedById: user?.uid || sessionId,
         voterIds: [],
-        watchedAt: serverTimestamp()
+        watchedAt: serverTimestamp(),
+        tmdbId: selectedMovie.tmdbId || ""
       });
 
       // Reset
@@ -872,6 +942,11 @@ export default function App() {
 
   // Deleting List Room (only accessible if logged in user matches the creator)
   const handleDeleteListRoom = (listId: string) => {
+    const targetRoom = myCreatedLists.find(l => l.id === listId) || activeList;
+    if (targetRoom && targetRoom.creatorId !== user?.uid) {
+      setErrorMessage("Only the original room creator can delete this room.");
+      return;
+    }
     setConfirmModal({
       title: "Delete Discussion Room",
       message: "Are you sure you want to permanently delete this discussion and voting room? This action cannot be undone.",
@@ -907,6 +982,46 @@ export default function App() {
     } catch (err) {
       console.error("Failed to save rules:", err);
       setErrorMessage("Could not save the room rules.");
+    }
+  };
+
+  // Admin Action: Add co-owner email
+  const handleAddCoOwner = async () => {
+    if (!currentRoute.listId || !newCoOwnerEmail.trim()) return;
+    const email = newCoOwnerEmail.trim().toLowerCase();
+    
+    // Simple email validation
+    if (!email.includes("@")) {
+      setErrorMessage("Please enter a valid Google email address.");
+      return;
+    }
+
+    try {
+      setIsAddingCoOwner(true);
+      const listRef = doc(db, "lists", currentRoute.listId);
+      await updateDoc(listRef, {
+        coOwners: arrayUnion(email)
+      });
+      setNewCoOwnerEmail("");
+    } catch (err) {
+      console.error("Failed to add co-owner:", err);
+      setErrorMessage("Could not add co-owner email.");
+    } finally {
+      setIsAddingCoOwner(false);
+    }
+  };
+
+  // Admin Action: Remove co-owner email
+  const handleRemoveCoOwner = async (email: string) => {
+    if (!currentRoute.listId) return;
+    try {
+      const listRef = doc(db, "lists", currentRoute.listId);
+      await updateDoc(listRef, {
+        coOwners: arrayRemove(email)
+      });
+    } catch (err) {
+      console.error("Failed to remove co-owner:", err);
+      setErrorMessage("Could not remove co-owner.");
     }
   };
 
@@ -1060,6 +1175,30 @@ export default function App() {
     }
   };
 
+  const handleAdminDeleteVote = (movie: MovieSuggestion, voterId: string) => {
+    const listId = currentRoute.listId || activeList?.id;
+    if (!listId) return;
+
+    setConfirmModal({
+      title: "Remove Vote",
+      message: "Are you sure you want to remove this person's vote?",
+      confirmText: "Remove Vote",
+      onConfirm: async () => {
+        try {
+          const movieRef = doc(db, "lists", listId, "movies", movie.id);
+          const newHistory = (movie.votersHistory || []).filter(h => h.voterId !== voterId);
+          await updateDoc(movieRef, {
+            voterIds: arrayRemove(voterId),
+            votersHistory: newHistory
+          });
+        } catch (err) {
+          console.error("Failed to delete vote:", err);
+          setErrorMessage("Could not delete this vote.");
+        }
+      }
+    });
+  };
+
   const handleDeleteMovieSuggestion = (movieId: string) => {
     const listId = currentRoute.listId || activeList?.id;
     if (!listId) return;
@@ -1092,6 +1231,8 @@ export default function App() {
     if (!tempAlias.trim()) return;
     saveAlias(tempAlias.trim());
     setAlias(tempAlias.trim());
+    localStorage.setItem("cinevote_alias_configured", "true");
+    setAliasConfigured(true);
     setIsEditingAlias(false);
   };
 
@@ -1132,10 +1273,69 @@ export default function App() {
     return timeB - timeA;
   });
 
-  const isAdminOfRoom = !!(activeList && user && activeList.creatorId === user.uid);
+  const isOriginalCreator = !!(activeList && user && activeList.creatorId === user.uid);
+  const isCoOwner = !!(
+    activeList && 
+    user && 
+    user.email && 
+    activeList.coOwners && 
+    activeList.coOwners.map((e: string) => e.toLowerCase().trim()).includes(user.email.toLowerCase().trim())
+  );
+  const isAdminOfRoom = isOriginalCreator || isCoOwner;
 
   return (
     <div id="cinevote_app" className="min-h-screen cinema-curtains-bg text-zinc-100 flex flex-col antialiased">
+      {/* FORCE USERNAME CONFIGURE OVERLAY */}
+      {currentRoute.path === "list" && currentRoute.listId && !aliasConfigured && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-md">
+          <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl max-w-md w-full shadow-2xl space-y-6 text-center relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-[4px] bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500" />
+            <div className="space-y-2">
+              <div className="bg-amber-500/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto border border-amber-500/20">
+                <Users className="w-8 h-8 text-amber-400 animate-pulse" />
+              </div>
+              <h2 className="font-serif font-black text-amber-400 text-2xl uppercase tracking-wider">Set Your Screen Name</h2>
+              <p className="text-zinc-400 text-xs font-serif italic max-w-xs mx-auto">
+                Welcome to the Cinevote room! Before entering, please set a custom screen name for your voting card and movie suggestions.
+              </p>
+            </div>
+
+            <form 
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.target as HTMLFormElement;
+                const input = form.elements.namedItem("nickname") as HTMLInputElement;
+                const name = input.value.trim();
+                if (name) {
+                  localStorage.setItem("cinevote_alias", name);
+                  localStorage.setItem("cinevote_alias_configured", "true");
+                  setAlias(name);
+                  setTempAlias(name);
+                  setAliasConfigured(true);
+                }
+              }}
+              className="space-y-4"
+            >
+              <input
+                name="nickname"
+                type="text"
+                required
+                autoFocus
+                placeholder="Enter screen name (e.g. PopcornLover)"
+                maxLength={30}
+                className="w-full bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-850 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:border-amber-500/50 text-center font-bold"
+              />
+              <button
+                type="submit"
+                className="w-full bg-amber-500 hover:bg-amber-600 text-black font-black py-3.5 rounded-2xl text-xs uppercase tracking-widest border border-amber-400 shadow-lg transition-all active:scale-95"
+              >
+                Join & Participate
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* GLOBAL TOAST ERROR MESSAGE */}
       <AnimatePresence>
         {errorMessage && (
@@ -1616,6 +1816,58 @@ export default function App() {
                     )}
                   </div>
 
+                  {/* ROOM CO-OWNERS PANEL */}
+                  {isAdminOfRoom && (
+                    <div className="bg-zinc-900/40 border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-4 relative overflow-hidden">
+                      <div>
+                        <h3 className="font-serif font-black text-amber-400 text-sm sm:text-base uppercase tracking-widest flex items-center gap-2">
+                          <Users className="w-4 h-4 text-amber-500" />
+                          Room Co-Owners
+                        </h3>
+                        <p className="text-zinc-500 text-[11px] font-medium mt-1 font-serif">
+                          Invite other users by their Google email address. Co-owners have admin rights to manage voting, suggestions, and delete votes, but cannot delete the room.
+                        </p>
+                      </div>
+
+                      {/* Add Co-Owner Form */}
+                      <div className="flex gap-2">
+                        <input
+                          type="email"
+                          value={newCoOwnerEmail}
+                          onChange={(e) => setNewCoOwnerEmail(e.target.value)}
+                          placeholder="co-owner@gmail.com"
+                          className="flex-1 bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-semibold"
+                        />
+                        <button
+                          onClick={handleAddCoOwner}
+                          disabled={isAddingCoOwner || !newCoOwnerEmail.trim()}
+                          className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-black font-black px-4 py-2 rounded-xl text-xs border border-amber-400 shadow-md transition-all whitespace-nowrap"
+                        >
+                          {isAddingCoOwner ? "Adding..." : "Add Owner"}
+                        </button>
+                      </div>
+
+                      {/* Co-Owners List */}
+                      {activeList.coOwners && activeList.coOwners.length > 0 ? (
+                        <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
+                          {activeList.coOwners.map((email: string) => (
+                            <div key={email} className="flex items-center justify-between bg-zinc-950/60 px-3 py-2 rounded-xl border border-zinc-850">
+                              <span className="text-xs text-zinc-300 font-mono font-semibold truncate select-all">{email}</span>
+                              <button
+                                onClick={() => handleRemoveCoOwner(email)}
+                                className="text-[10px] font-extrabold uppercase text-stone-500 hover:text-rose-400 transition-colors px-2 py-1 rounded hover:bg-rose-500/10"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-zinc-600 text-xs italic font-serif">No co-owners added yet. Only you are the administrator of this room.</p>
+                      )}
+                    </div>
+                  )}
+
                   {/* LIVE TIMER CARD */}
                   {activeList.releaseTime && timeLeft && (
                     <div className={`border p-6 rounded-2xl shadow-xl relative overflow-hidden transition-all ${
@@ -1659,25 +1911,55 @@ export default function App() {
 
                         {/* TIMER NUMBERS */}
                         <div className="flex items-center gap-4 shrink-0">
-                          <div className="flex gap-2">
-                            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
-                              <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
-                                {String(timeLeft.hours).padStart(2, '0')}
-                              </span>
-                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Hrs</span>
-                            </div>
-                            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
-                              <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
-                                {String(timeLeft.minutes).padStart(2, '0')}
-                              </span>
-                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Min</span>
-                            </div>
-                            <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
-                              <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
-                                {String(timeLeft.seconds).padStart(2, '0')}
-                              </span>
-                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Sec</span>
-                            </div>
+                          <div className="flex flex-wrap gap-2 justify-center">
+                            {timeLeft.months > 0 && (
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                  {String(timeLeft.months).padStart(2, '0')}
+                                </span>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Mth</span>
+                              </div>
+                            )}
+                            {timeLeft.weeks > 0 && (
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                  {String(timeLeft.weeks).padStart(2, '0')}
+                                </span>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Wk</span>
+                              </div>
+                            )}
+                            {timeLeft.days > 0 && (
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                  {String(timeLeft.days).padStart(2, '0')}
+                                </span>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Day</span>
+                              </div>
+                            )}
+                            {timeLeft.hours > 0 && (
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                  {String(timeLeft.hours).padStart(2, '0')}
+                                </span>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Hrs</span>
+                              </div>
+                            )}
+                            {timeLeft.minutes > 0 && (
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                  {String(timeLeft.minutes).padStart(2, '0')}
+                                </span>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Min</span>
+                              </div>
+                            )}
+                            {timeLeft.seconds > 0 && (
+                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                  {String(timeLeft.seconds).padStart(2, '0')}
+                                </span>
+                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Sec</span>
+                              </div>
+                            )}
                           </div>
 
                           {isAdminOfRoom && (
@@ -2154,9 +2436,6 @@ export default function App() {
                             Full Archive ({watchedMovies.length})
                           </button>
                         </div>
-                        <span className="text-[10px] bg-zinc-900/50 border border-zinc-800 text-amber-400 font-black font-mono px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md self-start sm:self-auto">
-                          Real-time Synced
-                        </span>
                       </div>
 
                       {activeTab === "active" ? (
@@ -2193,6 +2472,52 @@ export default function App() {
                                         : "bg-zinc-900/40 border-zinc-800 shadow-xl hover:border-zinc-700/60"
                                     }`}
                                   >
+                                    {/* Curtains Overlay */}
+                                    {isTopMovie && !openedCurtains[movie.id] && !localStorage.getItem(`cinevote_curtains_${movie.id}`) && (
+                                      <motion.div 
+                                        className="absolute inset-0 z-20 flex overflow-hidden pointer-events-none rounded-2xl"
+                                        onAnimationComplete={() => {
+                                          localStorage.setItem(`cinevote_curtains_${movie.id}`, "true");
+                                          setOpenedCurtains(prev => ({ ...prev, [movie.id]: true }));
+                                        }}
+                                      >
+                                        {/* Left Curtain */}
+                                        <motion.div
+                                          initial={{ x: "0%" }}
+                                          animate={{ x: "-100%" }}
+                                          transition={{ delay: 0.8, duration: 1.8, ease: [0.77, 0, 0.175, 1] }}
+                                          className="w-1/2 h-full bg-gradient-to-r from-red-950 via-red-900 to-red-800 border-r border-amber-500/20 flex items-center justify-end pr-4 shadow-[5px_0_15px_rgba(0,0,0,0.5)]"
+                                          style={{ backgroundImage: "linear-gradient(90deg, rgba(120,10,10,1) 0%, rgba(180,15,15,1) 50%, rgba(120,10,10,1) 100%)", backgroundSize: "40px 100%" }}
+                                        >
+                                          <div className="w-1 h-full bg-amber-500/30 opacity-60" />
+                                        </motion.div>
+
+                                        {/* Right Curtain */}
+                                        <motion.div
+                                          initial={{ x: "0%" }}
+                                          animate={{ x: "100%" }}
+                                          transition={{ delay: 0.8, duration: 1.8, ease: [0.77, 0, 0.175, 1] }}
+                                          className="w-1/2 h-full bg-gradient-to-l from-red-950 via-red-900 to-red-800 border-l border-amber-500/20 flex items-center justify-start pl-4 shadow-[-5px_0_15px_rgba(0,0,0,0.5)]"
+                                          style={{ backgroundImage: "linear-gradient(90deg, rgba(120,10,10,1) 0%, rgba(180,15,15,1) 50%, rgba(120,10,10,1) 100%)", backgroundSize: "40px 100%" }}
+                                        >
+                                          <div className="w-1 h-full bg-amber-500/30 opacity-60" />
+                                        </motion.div>
+
+                                        {/* Center Golden Lock Indicator */}
+                                        <motion.div 
+                                          initial={{ opacity: 1, scale: 1 }}
+                                          animate={{ opacity: 0, scale: 0.8 }}
+                                          transition={{ delay: 0.6, duration: 0.4 }}
+                                          className="absolute inset-0 flex items-center justify-center z-30"
+                                        >
+                                          <div className="bg-black/80 border border-amber-500/30 backdrop-blur-md px-6 py-3 rounded-full flex items-center gap-2 shadow-2xl">
+                                            <Film className="w-4 h-4 text-amber-400 animate-spin" />
+                                            <span className="font-serif font-black text-amber-300 text-xs uppercase tracking-widest">Opening Curtains...</span>
+                                          </div>
+                                        </motion.div>
+                                      </motion.div>
+                                    )}
+
                                     {isGoldHighlighted && (
                                       <div className="bg-gradient-to-r from-amber-950/40 via-amber-600/20 to-amber-950/40 text-amber-100 font-serif font-black text-xs uppercase tracking-widest px-4 py-2 text-center border-b border-amber-400/50 flex items-center justify-center gap-2 shadow-inner">
                                         <Sparkles className="w-4 h-4 animate-pulse text-amber-300" />
@@ -2309,6 +2634,16 @@ export default function App() {
                                                       ))}
                                                     </div>
                                                   )}
+                                                  <span className="text-amber-500/30">&bull;</span>
+                                                  <a
+                                                    href={movie.tmdbId ? `https://www.themoviedb.org/movie/${movie.tmdbId}` : `https://www.themoviedb.org/search?query=${encodeURIComponent(movie.title)}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 font-bold text-xs group"
+                                                  >
+                                                    <Film className="w-3.5 h-3.5 text-amber-500 group-hover:scale-110 transition-transform" />
+                                                    <span>TMDB Page</span>
+                                                  </a>
                                                   <span className="text-amber-500/30">&bull;</span>
                                                   <a
                                                     href={movie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + movie.year + " official trailer")}`}
@@ -2686,6 +3021,16 @@ export default function App() {
                                                   )}
                                                   <span className="text-amber-500/30">&bull;</span>
                                                   <a
+                                                    href={movie.tmdbId ? `https://www.themoviedb.org/movie/${movie.tmdbId}` : `https://www.themoviedb.org/search?query=${encodeURIComponent(movie.title)}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-1 text-amber-400 hover:text-amber-300 font-bold text-xs group"
+                                                  >
+                                                    <Film className="w-3.5 h-3.5 text-amber-500 group-hover:scale-110 transition-transform" />
+                                                    <span>TMDB Page</span>
+                                                  </a>
+                                                  <span className="text-amber-500/30">&bull;</span>
+                                                  <a
                                                     href={movie.trailerUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(movie.title + " " + movie.year + " official trailer")}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
@@ -2863,13 +3208,24 @@ export default function App() {
                               </p>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-[9px] text-amber-400/80 font-mono font-bold">
-                              {new Date(voter.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </p>
-                            <p className="text-[9px] text-zinc-500 font-mono">
-                              {new Date(voter.timestamp).toLocaleDateString()}
-                            </p>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <p className="text-[9px] text-amber-400/80 font-mono font-bold">
+                                {new Date(voter.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                              <p className="text-[9px] text-zinc-500 font-mono">
+                                {new Date(voter.timestamp).toLocaleDateString()}
+                              </p>
+                            </div>
+                            {isAdminOfRoom && (
+                              <button
+                                onClick={() => handleAdminDeleteVote(activeMovie, voter.voterId)}
+                                className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-zinc-950 rounded-lg transition-all"
+                                title="Delete user's vote"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
