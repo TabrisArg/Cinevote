@@ -26,7 +26,8 @@ import {
   Clock,
   Ticket,
   Clapperboard,
-  Info
+  Info,
+  Pencil
 } from "lucide-react";
 import { db, auth, googleProvider } from "./firebase";
 import { signInWithPopup, signInWithRedirect, getRedirectResult, signOut, User } from "firebase/auth";
@@ -129,9 +130,22 @@ export default function App() {
   const [isEditingRules, setIsEditingRules] = useState(false);
   const [rulesList, setRulesList] = useState<string[]>([]);
   const [newRuleInput, setNewRuleInput] = useState("");
+  const [editingRuleIndex, setEditingRuleIndex] = useState<number | null>(null);
+  const [editingRuleValue, setEditingRuleValue] = useState("");
   const [rulesDisplayType, setRulesDisplayType] = useState<"unordered" | "ordered">(() => {
     return (localStorage.getItem("cinevote_rules_display_type") as "unordered" | "ordered") || "unordered";
   });
+
+  const handleSaveRuleEdit = (index: number) => {
+    if (!editingRuleValue.trim()) return;
+    setRulesList(prev => {
+      const updated = [...prev];
+      updated[index] = editingRuleValue.trim();
+      return updated;
+    });
+    setEditingRuleIndex(null);
+    setEditingRuleValue("");
+  };
 
   // Changelog State
   const [showChangelog, setShowChangelog] = useState(false);
@@ -1998,6 +2012,8 @@ export default function App() {
                           <button
                             onClick={() => {
                               setIsEditingRules(!isEditingRules);
+                              setEditingRuleIndex(null);
+                              setEditingRuleValue("");
                             }}
                             className="text-xs text-amber-300 hover:text-amber-200 font-extrabold uppercase tracking-wider bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 px-2 py-1 rounded"
                           >
@@ -2011,18 +2027,69 @@ export default function App() {
                       <div className="space-y-3">
                         {/* Rules List with minus buttons */}
                         {rulesList.length > 0 ? (
-                          <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
                             {rulesList.map((rule, index) => (
-                              <div key={index} className="flex items-center justify-between bg-zinc-950/60 px-3 py-2 rounded-xl border border-zinc-850 gap-3">
-                                <span className="text-xs text-zinc-300 font-semibold truncate flex-1">{rule}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveLocalRule(index)}
-                                  className="text-stone-400 hover:text-rose-400 p-1.5 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 rounded-lg transition-all shrink-0 flex items-center justify-center"
-                                  title="Remove rule"
-                                >
-                                  <Minus className="w-3.5 h-3.5" />
-                                </button>
+                              <div key={index} className="flex items-center justify-between bg-zinc-950/60 px-3 py-2 rounded-xl border border-zinc-850 gap-3 min-h-[46px]">
+                                {editingRuleIndex === index ? (
+                                  <div className="flex-1 flex items-center gap-2">
+                                    <input
+                                      type="text"
+                                      value={editingRuleValue}
+                                      onChange={(e) => setEditingRuleValue(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          e.preventDefault();
+                                          handleSaveRuleEdit(index);
+                                        } else if (e.key === "Escape") {
+                                          setEditingRuleIndex(null);
+                                        }
+                                      }}
+                                      className="flex-1 bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500/50 font-semibold"
+                                      autoFocus
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveRuleEdit(index)}
+                                      className="text-emerald-400 hover:text-emerald-300 p-1.5 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 rounded-lg transition-all flex items-center justify-center cursor-pointer"
+                                      title="Save change"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingRuleIndex(null)}
+                                      className="text-stone-400 hover:text-stone-200 px-2 py-1 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 rounded-lg transition-all text-[10px] font-black uppercase cursor-pointer"
+                                      title="Cancel"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex-1 flex items-center justify-between gap-3 min-w-0">
+                                    <span className="text-xs text-zinc-300 font-semibold truncate flex-1">{rule}</span>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingRuleIndex(index);
+                                          setEditingRuleValue(rule);
+                                        }}
+                                        className="text-amber-500 hover:text-amber-400 p-1.5 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 rounded-lg transition-all flex items-center justify-center cursor-pointer"
+                                        title="Edit rule"
+                                      >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveLocalRule(index)}
+                                        className="text-stone-400 hover:text-rose-400 p-1.5 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 rounded-lg transition-all flex items-center justify-center cursor-pointer"
+                                        title="Remove rule"
+                                      >
+                                        <Minus className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
