@@ -126,7 +126,17 @@ export default function App() {
 
   // Room Rules State
   const [isEditingRules, setIsEditingRules] = useState(false);
-  const [rulesInput, setRulesInput] = useState("");
+  const [rulesList, setRulesList] = useState<string[]>([]);
+  const [newRuleInput, setNewRuleInput] = useState("");
+
+  const getRulesArray = (rules: any): string[] => {
+    if (!rules) return [];
+    if (Array.isArray(rules)) return rules.filter(r => r.trim() !== "");
+    if (typeof rules === "string") {
+      return rules.split("\n").map(r => r.trim()).filter(r => r !== "");
+    }
+    return [];
+  };
 
   // Co-Owners State
   const [newCoOwnerEmail, setNewCoOwnerEmail] = useState("");
@@ -149,12 +159,12 @@ export default function App() {
     }
   }, [errorMessage]);
 
-  // Synchronize rulesInput when activeList changes
+  // Synchronize rulesList when activeList changes
   useEffect(() => {
     if (activeList) {
-      setRulesInput(activeList.rules || "");
+      setRulesList(getRulesArray(activeList.rules));
     } else {
-      setRulesInput("");
+      setRulesList([]);
     }
   }, [activeList?.id, activeList?.rules]);
 
@@ -283,6 +293,73 @@ export default function App() {
 
     return () => unsubscribe();
   }, [user]);
+
+  // Sync recently visited rooms from Firestore to local state when logged in
+  useEffect(() => {
+    if (!user) return;
+
+    const userDocRef = doc(db, "users", user.uid);
+    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const firestoreRecentIds: string[] = data?.recentRooms || [];
+        
+        setRecentListIds((currentLocalIds) => {
+          // Merge local and firestore, keeping order but avoiding duplicates
+          const combined = Array.from(new Set([...firestoreRecentIds, ...currentLocalIds])).slice(0, 10);
+          
+          // Save to localStorage as backup
+          localStorage.setItem("cinevote_recent_rooms", JSON.stringify(combined));
+          return combined;
+        });
+      }
+    }, (error) => {
+      console.warn("Error listening to user preferences:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Sync local recently visited rooms state to Firestore when logged in and state changes
+  useEffect(() => {
+    if (!user || recentListIds.length === 0) return;
+
+    const userDocRef = doc(db, "users", user.uid);
+    
+    const saveToFirestore = async () => {
+      try {
+        const docSnap = await getDoc(userDocRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const firestoreRecentIds: string[] = data?.recentRooms || [];
+          
+          // Check if different to minimize Firestore writes
+          const isDifferent = 
+            recentListIds.length !== firestoreRecentIds.length || 
+            recentListIds.some((id, idx) => id !== firestoreRecentIds[idx]);
+          
+          if (isDifferent) {
+            await updateDoc(userDocRef, {
+              recentRooms: recentListIds,
+              updatedAt: serverTimestamp()
+            });
+          }
+        } else {
+          // Document doesn't exist, create it
+          await setDoc(userDocRef, {
+            recentRooms: recentListIds,
+            updatedAt: serverTimestamp()
+          });
+        }
+      } catch (err) {
+        console.error("Error syncing recent rooms to Firestore:", err);
+      }
+    };
+
+    // Debounce Firestore writes to prevent excessive operations
+    const timeout = setTimeout(saveToFirestore, 1000);
+    return () => clearTimeout(timeout);
+  }, [user, recentListIds]);
 
   // Sync recent lists data
   useEffect(() => {
@@ -976,13 +1053,23 @@ export default function App() {
     try {
       const listRef = doc(db, "lists", currentRoute.listId);
       await updateDoc(listRef, {
-        rules: rulesInput.trim()
+        rules: rulesList
       });
       setIsEditingRules(false);
     } catch (err) {
       console.error("Failed to save rules:", err);
       setErrorMessage("Could not save the room rules.");
     }
+  };
+
+  const handleAddLocalRule = () => {
+    if (!newRuleInput.trim()) return;
+    setRulesList(prev => [...prev, newRuleInput.trim()]);
+    setNewRuleInput("");
+  };
+
+  const handleRemoveLocalRule = (index: number) => {
+    setRulesList(prev => prev.filter((_, i) => i !== index));
   };
 
   // Admin Action: Add co-owner email
@@ -1793,26 +1880,77 @@ export default function App() {
                     
                     {isEditingRules ? (
                       <div className="space-y-3">
-                        <textarea
-                          value={rulesInput}
-                          onChange={(e) => setRulesInput(e.target.value)}
-                          placeholder="Write the rules for this room (e.g. Max 3 suggestions per guest, no horror movies...)"
-                          rows={3}
-                          className="w-full bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-500/50 resize-none font-semibold"
-                        />
-                        <div className="flex justify-end">
+                        {/* Rules List with minus buttons */}
+                        {rulesList.length > 0 ? (
+                          <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                            {rulesList.map((rule, index) => (
+                              <div key={index} className="flex items-center justify-between bg-zinc-950/60 px-3 py-2 rounded-xl border border-zinc-850 gap-3">
+                                <span className="text-xs text-zinc-300 font-semibold truncate flex-1">{rule}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveLocalRule(index)}
+                                  className="text-stone-400 hover:text-rose-400 p-1.5 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 rounded-lg transition-all shrink-0 flex items-center justify-center"
+                                  title="Remove rule"
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-zinc-600 text-xs italic font-serif">No rules have been added yet.</p>
+                        )}
+
+                        {/* Input rule with plus button */}
+                        <div className="flex gap-2 pt-1">
+                          <input
+                            type="text"
+                            value={newRuleInput}
+                            onChange={(e) => setNewRuleInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddLocalRule();
+                              }
+                            }}
+                            placeholder="Add a new room rule (e.g. No horror movies...)"
+                            className="flex-1 bg-zinc-950 text-zinc-100 placeholder-zinc-600 border border-zinc-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-amber-500/50 font-semibold"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddLocalRule}
+                            disabled={!newRuleInput.trim()}
+                            className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-black px-3 py-2 rounded-xl text-xs font-black border border-amber-400 shadow-md transition-all shrink-0 flex items-center justify-center"
+                            title="Add rule"
+                          >
+                            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                          </button>
+                        </div>
+
+                        {/* Save Actions */}
+                        <div className="flex justify-end pt-2 border-t border-zinc-800/40">
                           <button
                             onClick={handleSaveRules}
-                            className="bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2 rounded-xl text-xs border border-amber-400 shadow-md"
+                            className="bg-amber-500 hover:bg-amber-600 text-black font-black px-4 py-2 rounded-xl text-xs border border-amber-400 shadow-md transition-all active:scale-95"
                           >
                             Save Rules
                           </button>
                         </div>
                       </div>
                     ) : (
-                      <p className="text-zinc-300 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap font-medium">
-                        {activeList.rules ? activeList.rules : "No rules have been set for this movie room yet."}
-                      </p>
+                      rulesList.length > 0 ? (
+                        <ul className="list-disc pl-5 space-y-1.5 text-zinc-300 text-xs sm:text-sm font-medium">
+                          {rulesList.map((rule, index) => (
+                            <li key={index} className="leading-relaxed">
+                              {rule}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-zinc-500 text-xs italic font-serif leading-relaxed">
+                          No rules have been set for this movie room yet.
+                        </p>
+                      )
                     )}
                   </div>
 
@@ -2473,7 +2611,7 @@ export default function App() {
                                     }`}
                                   >
                                     {/* Curtains Overlay */}
-                                    {isTopMovie && !openedCurtains[movie.id] && !localStorage.getItem(`cinevote_curtains_${movie.id}`) && (
+                                    {isGoldHighlighted && !openedCurtains[movie.id] && !localStorage.getItem(`cinevote_curtains_${movie.id}`) && (
                                       <motion.div 
                                         className="absolute inset-0 z-20 flex overflow-hidden pointer-events-none rounded-2xl"
                                         onAnimationComplete={() => {
@@ -2485,7 +2623,7 @@ export default function App() {
                                         <motion.div
                                           initial={{ x: "0%" }}
                                           animate={{ x: "-100%" }}
-                                          transition={{ delay: 0.8, duration: 1.8, ease: [0.77, 0, 0.175, 1] }}
+                                          transition={{ delay: 1.6, duration: 3.6, ease: [0.77, 0, 0.175, 1] }}
                                           className="w-1/2 h-full bg-gradient-to-r from-red-950 via-red-900 to-red-800 border-r border-amber-500/20 flex items-center justify-end pr-4 shadow-[5px_0_15px_rgba(0,0,0,0.5)]"
                                           style={{ backgroundImage: "linear-gradient(90deg, rgba(120,10,10,1) 0%, rgba(180,15,15,1) 50%, rgba(120,10,10,1) 100%)", backgroundSize: "40px 100%" }}
                                         >
@@ -2496,7 +2634,7 @@ export default function App() {
                                         <motion.div
                                           initial={{ x: "0%" }}
                                           animate={{ x: "100%" }}
-                                          transition={{ delay: 0.8, duration: 1.8, ease: [0.77, 0, 0.175, 1] }}
+                                          transition={{ delay: 1.6, duration: 3.6, ease: [0.77, 0, 0.175, 1] }}
                                           className="w-1/2 h-full bg-gradient-to-l from-red-950 via-red-900 to-red-800 border-l border-amber-500/20 flex items-center justify-start pl-4 shadow-[-5px_0_15px_rgba(0,0,0,0.5)]"
                                           style={{ backgroundImage: "linear-gradient(90deg, rgba(120,10,10,1) 0%, rgba(180,15,15,1) 50%, rgba(120,10,10,1) 100%)", backgroundSize: "40px 100%" }}
                                         >
@@ -2507,7 +2645,7 @@ export default function App() {
                                         <motion.div 
                                           initial={{ opacity: 1, scale: 1 }}
                                           animate={{ opacity: 0, scale: 0.8 }}
-                                          transition={{ delay: 0.6, duration: 0.4 }}
+                                          transition={{ delay: 1.2, duration: 0.8 }}
                                           className="absolute inset-0 flex items-center justify-center z-30"
                                         >
                                           <div className="bg-black/80 border border-amber-500/30 backdrop-blur-md px-6 py-3 rounded-full flex items-center gap-2 shadow-2xl">

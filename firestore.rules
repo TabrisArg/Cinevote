@@ -6,8 +6,20 @@ service cloud.firestore {
       return database == 'ai-studio-2c8cbe9c-679e-4aa8-aea7-bf3d89d72661' || database == '(default)';
     }
 
-    match /{document=**} {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /lists/{listId} {
       allow read, write: if true;
+
+      match /movies/{movieId} {
+        allow read, write: if true;
+      }
+
+      match /watched/{movieId} {
+        allow read, write: if true;
+      }
     }
   }
 }

@@ -107,6 +107,21 @@
         }
       },
       "required": ["title", "suggestedBy", "suggestedById"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User specific preferences and metadata like recently visited rooms",
+      "type": "object",
+      "properties": {
+        "recentRooms": {
+          "type": "array",
+          "description": "List of recently visited room IDs"
+        },
+        "updatedAt": {
+          "type": "object",
+          "description": "Firestore server timestamp of last update"
+        }
+      }
     }
   },
   "firestore": {
@@ -121,6 +136,10 @@
     "/lists/{listId}/watched/{movieId}": {
       "schema": "MovieSuggestion",
       "description": "Subcollection of movies that have been watched after release countdown"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile containing metadata like recently visited rooms"
     }
   }
 }
