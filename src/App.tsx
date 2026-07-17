@@ -844,20 +844,6 @@ export default function App() {
     try {
       const voterId = user?.uid || sessionId;
 
-      // If they haven't logged in (!user), they can only vote for ONE movie.
-      // Since suggesting a movie automatically self-votes, let's clear their vote from all other movies.
-      if (!user) {
-        const otherMoviesVoted = movieSuggestions.filter((m) => m.voterIds?.includes(voterId));
-        for (const otherMovie of otherMoviesVoted) {
-          const otherMovieRef = doc(db, "lists", currentRoute.listId, "movies", otherMovie.id);
-          const otherNewHistory = (otherMovie.votersHistory || []).filter(h => h.voterId !== voterId);
-          await updateDoc(otherMovieRef, {
-            voterIds: arrayRemove(voterId),
-            votersHistory: otherNewHistory
-          });
-        }
-      }
-
       await addDoc(collection(db, "lists", currentRoute.listId, "movies"), {
         title: selectedMovie.title,
         year: selectedMovie.year,
@@ -1258,21 +1244,6 @@ export default function App() {
           votersHistory: newHistory
         });
       } else {
-        // If they haven't logged in (!user), enforce they can only vote for ONE movie
-        if (!user) {
-          const otherMoviesVoted = movieSuggestions.filter(
-            (m) => m.id !== movie.id && m.voterIds?.includes(voterId)
-          );
-          for (const otherMovie of otherMoviesVoted) {
-            const otherMovieRef = doc(db, "lists", currentRoute.listId, "movies", otherMovie.id);
-            const otherNewHistory = (otherMovie.votersHistory || []).filter(h => h.voterId !== voterId);
-            await updateDoc(otherMovieRef, {
-              voterIds: arrayRemove(voterId),
-              votersHistory: otherNewHistory
-            });
-          }
-        }
-
         // Add vote to the clicked movie
         const newHistoryItem = {
           voterId: voterId,
