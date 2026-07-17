@@ -45,7 +45,8 @@ import {
   serverTimestamp,
   arrayUnion,
   arrayRemove,
-  getDoc
+  getDoc,
+  getDocs
 } from "firebase/firestore";
 import { VotingList, MovieSuggestion, Argument, RepeatingSchedule } from "./types";
 import { getOrCreateSessionId, getOrCreateAlias, saveAlias } from "./utils/names";
@@ -129,6 +130,7 @@ export default function App() {
   // Room Rules State
   const [isEditingRules, setIsEditingRules] = useState(false);
   const [rulesList, setRulesList] = useState<string[]>([]);
+  const [rulesTitle, setRulesTitle] = useState("");
   const [newRuleInput, setNewRuleInput] = useState("");
   const [editingRuleIndex, setEditingRuleIndex] = useState<number | null>(null);
   const [editingRuleValue, setEditingRuleValue] = useState("");
@@ -162,6 +164,7 @@ export default function App() {
   // Co-Owners State
   const [newCoOwnerEmail, setNewCoOwnerEmail] = useState("");
   const [isAddingCoOwner, setIsAddingCoOwner] = useState(false);
+  const [coOwnerProfiles, setCoOwnerProfiles] = useState<Record<string, string>>({});
 
   // Curtains Animation State
   const [openedCurtains, setOpenedCurtains] = useState<Record<string, boolean>>({});
@@ -180,14 +183,16 @@ export default function App() {
     }
   }, [errorMessage]);
 
-  // Synchronize rulesList when activeList changes
+  // Synchronize rulesList and rulesTitle when activeList changes
   useEffect(() => {
     if (activeList) {
       setRulesList(getRulesArray(activeList.rules));
+      setRulesTitle(activeList.rulesTitle || "");
     } else {
       setRulesList([]);
+      setRulesTitle("");
     }
-  }, [activeList?.id, activeList?.rules]);
+  }, [activeList?.id, activeList?.rules, activeList?.rulesTitle]);
 
   // Helper to extract embeddable YouTube link
   const getYoutubeEmbedUrl = (url: string) => {
@@ -381,6 +386,73 @@ export default function App() {
     const timeout = setTimeout(saveToFirestore, 1000);
     return () => clearTimeout(timeout);
   }, [user, recentListIds]);
+
+  // Save user profile info (name and email) to Firestore when logged in
+  useEffect(() => {
+    if (!user) return;
+
+    const saveUserProfile = async () => {
+      try {
+        const userDocRef = doc(db, "users", user.uid);
+        const docSnap = await getDoc(userDocRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (!data.email || !data.displayName) {
+            await updateDoc(userDocRef, {
+              email: user.email?.toLowerCase().trim() || "",
+              displayName: user.displayName || user.email?.split("@")[0] || "Movie Buff",
+              updatedAt: serverTimestamp()
+            });
+          }
+        } else {
+          await setDoc(userDocRef, {
+            email: user.email?.toLowerCase().trim() || "",
+            displayName: user.displayName || user.email?.split("@")[0] || "Movie Buff",
+            recentRooms: [],
+            updatedAt: serverTimestamp()
+          });
+        }
+      } catch (err) {
+        console.error("Error saving user profile to Firestore:", err);
+      }
+    };
+
+    saveUserProfile();
+  }, [user]);
+
+  // Fetch profiles of co-owners to display their names
+  useEffect(() => {
+    if (!activeList?.coOwners || activeList.coOwners.length === 0) {
+      setCoOwnerProfiles({});
+      return;
+    }
+
+    const fetchCoOwnerProfiles = async () => {
+      try {
+        const emails = activeList.coOwners.map((e: string) => e.toLowerCase().trim()).filter(Boolean);
+        if (emails.length === 0) return;
+
+        // Query Firestore users collection for matching emails
+        const q = query(
+          collection(db, "users"),
+          where("email", "in", emails)
+        );
+        const querySnapshot = await getDocs(q);
+        const profiles: Record<string, string> = {};
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data.email && data.displayName) {
+            profiles[data.email.toLowerCase().trim()] = data.displayName;
+          }
+        });
+        setCoOwnerProfiles(profiles);
+      } catch (err) {
+        console.error("Failed to fetch co-owner profiles:", err);
+      }
+    };
+
+    fetchCoOwnerProfiles();
+  }, [activeList?.coOwners]);
 
   // Sync recent lists data
   useEffect(() => {
@@ -1129,17 +1201,22 @@ export default function App() {
   };
 
   // Admin Action: Save custom rules for the room
+  const [isSavingRules, setIsSavingRules] = useState(false);
   const handleSaveRules = async () => {
     if (!currentRoute.listId) return;
     try {
+      setIsSavingRules(true);
       const listRef = doc(db, "lists", currentRoute.listId);
       await updateDoc(listRef, {
-        rules: rulesList
+        rules: rulesList,
+        rulesTitle: rulesTitle.trim()
       });
       setIsEditingRules(false);
     } catch (err) {
       console.error("Failed to save rules:", err);
       setErrorMessage("Could not save the room rules.");
+    } finally {
+      setIsSavingRules(false);
     }
   };
 
@@ -1971,60 +2048,81 @@ export default function App() {
                   </div>
 
                   {/* ROOM RULES PANEL */}
-                  <div className="bg-zinc-900/40 border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-3 relative overflow-hidden">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <h3 className="font-serif font-black text-amber-400 text-sm sm:text-base uppercase tracking-widest flex items-center gap-2">
-                        <Clapperboard className="w-4 h-4 text-amber-500" />
-                        Room Rules
-                      </h3>
-                      <div className="flex items-center gap-2 self-end sm:self-auto">
-                        <div className="flex items-center gap-0.5 bg-zinc-950 p-0.5 rounded-lg border border-zinc-850">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRulesDisplayType("unordered");
-                              localStorage.setItem("cinevote_rules_display_type", "unordered");
-                            }}
-                            className={`px-2.5 py-0.5 text-[9px] font-black uppercase rounded-md transition-all cursor-pointer ${
-                              rulesDisplayType === "unordered"
-                                ? "bg-amber-500 text-black shadow-md font-black"
-                                : "text-zinc-400 hover:text-zinc-200"
-                            }`}
-                          >
-                            Bullets
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRulesDisplayType("ordered");
-                              localStorage.setItem("cinevote_rules_display_type", "ordered");
-                            }}
-                            className={`px-2.5 py-0.5 text-[9px] font-black uppercase rounded-md transition-all cursor-pointer ${
-                              rulesDisplayType === "ordered"
-                                ? "bg-amber-500 text-black shadow-md font-black"
-                                : "text-zinc-400 hover:text-zinc-200"
-                            }`}
-                          >
-                            Numbered
-                          </button>
+                  <div className="bg-zinc-900/40 border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-4 relative overflow-hidden">
+                    <div className="space-y-1.5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <h3 className="font-serif font-black text-amber-400 text-sm sm:text-base uppercase tracking-widest flex items-center gap-2">
+                          <Clapperboard className="w-4 h-4 text-amber-500" />
+                          Room Rules
+                        </h3>
+                        <div className="flex items-center gap-2 self-end sm:self-auto">
+                          <div className="flex items-center gap-0.5 bg-zinc-950 p-0.5 rounded-lg border border-zinc-850">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRulesDisplayType("unordered");
+                                localStorage.setItem("cinevote_rules_display_type", "unordered");
+                              }}
+                              className={`px-2.5 py-0.5 text-[9px] font-black uppercase rounded-md transition-all cursor-pointer ${
+                                rulesDisplayType === "unordered"
+                                  ? "bg-amber-500 text-black shadow-md font-black"
+                                  : "text-zinc-400 hover:text-zinc-200"
+                              }`}
+                            >
+                              Bullets
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRulesDisplayType("ordered");
+                                localStorage.setItem("cinevote_rules_display_type", "ordered");
+                              }}
+                              className={`px-2.5 py-0.5 text-[9px] font-black uppercase rounded-md transition-all cursor-pointer ${
+                                rulesDisplayType === "ordered"
+                                  ? "bg-amber-500 text-black shadow-md font-black"
+                                  : "text-zinc-400 hover:text-zinc-200"
+                              }`}
+                            >
+                              Numbered
+                            </button>
+                          </div>
+                          {isAdminOfRoom && (
+                            <button
+                              onClick={() => {
+                                setIsEditingRules(!isEditingRules);
+                                setEditingRuleIndex(null);
+                                setEditingRuleValue("");
+                              }}
+                              className="text-xs text-amber-300 hover:text-amber-200 font-extrabold uppercase tracking-wider bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 px-2 py-1 rounded"
+                            >
+                              {isEditingRules ? "Cancel" : "Edit Rules"}
+                            </button>
+                          )}
                         </div>
-                        {isAdminOfRoom && (
-                          <button
-                            onClick={() => {
-                              setIsEditingRules(!isEditingRules);
-                              setEditingRuleIndex(null);
-                              setEditingRuleValue("");
-                            }}
-                            className="text-xs text-amber-300 hover:text-amber-200 font-extrabold uppercase tracking-wider bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 px-2 py-1 rounded"
-                          >
-                            {isEditingRules ? "Cancel" : "Edit Rules"}
-                          </button>
-                        )}
                       </div>
+                      {activeList?.rulesTitle && !isEditingRules && (
+                        <p className="text-zinc-100 font-extrabold text-xs sm:text-sm tracking-wide pl-6 uppercase">
+                          {activeList.rulesTitle}
+                        </p>
+                      )}
                     </div>
                     
                     {isEditingRules ? (
-                      <div className="space-y-3">
+                      <div className="space-y-3.5">
+                        {/* Rules Title Input */}
+                        <div className="space-y-1 bg-zinc-950/40 p-3 rounded-xl border border-zinc-800/60">
+                          <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-extrabold block">
+                            Optional Rules Title / Subtitle
+                          </label>
+                          <input
+                            type="text"
+                            value={rulesTitle}
+                            onChange={(e) => setRulesTitle(e.target.value)}
+                            placeholder="e.g. Host's Selection Guidelines (leave empty for none)"
+                            className="w-full bg-zinc-950 text-zinc-100 placeholder-zinc-700 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-amber-500/50 font-semibold"
+                          />
+                        </div>
+
                         {/* Rules List with minus buttons */}
                         {rulesList.length > 0 ? (
                           <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
@@ -2193,24 +2291,57 @@ export default function App() {
                         </button>
                       </div>
 
-                      {/* Co-Owners List */}
-                      {activeList.coOwners && activeList.coOwners.length > 0 ? (
-                        <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
-                          {activeList.coOwners.map((email: string) => (
-                            <div key={email} className="flex items-center justify-between bg-zinc-950/60 px-3 py-2 rounded-xl border border-zinc-850">
-                              <span className="text-xs text-zinc-300 font-mono font-semibold truncate select-all">{email}</span>
-                              <button
-                                onClick={() => handleRemoveCoOwner(email)}
-                                className="text-[10px] font-extrabold uppercase text-stone-500 hover:text-rose-400 transition-colors px-2 py-1 rounded hover:bg-rose-500/10"
-                              >
-                                Remove
-                              </button>
+                      {/* Co-Owners and Creator List */}
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-extrabold block">
+                          Room Administrators
+                        </label>
+                        <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                          {/* 1. Room Creator (Always First) */}
+                          <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 rounded-xl gap-3">
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-xs text-amber-300 font-extrabold flex items-center gap-1.5 truncate">
+                                {activeList.creatorName}
+                                <span className="bg-amber-500 text-black text-[9px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider shrink-0 scale-90 origin-left">
+                                  Creator
+                                </span>
+                              </span>
+                              <span className="text-[10px] text-zinc-400 font-mono select-all truncate">
+                                {activeList.creatorEmail || "No email registered"}
+                              </span>
                             </div>
-                          ))}
+                            <span className="text-[10px] font-black text-amber-500/80 uppercase tracking-wider shrink-0 mr-1">
+                              Primary Host
+                            </span>
+                          </div>
+
+                          {/* 2. Co-Owners */}
+                          {activeList.coOwners && activeList.coOwners.length > 0 ? (
+                            activeList.coOwners.map((email: string) => {
+                              const trimmedEmail = email.toLowerCase().trim();
+                              const displayName = coOwnerProfiles[trimmedEmail] || "Invited Co-Owner";
+                              return (
+                                <div key={email} className="flex items-center justify-between bg-zinc-950/60 px-3 py-2.5 rounded-xl border border-zinc-850 gap-3">
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-xs text-zinc-300 font-bold truncate">
+                                      {displayName}
+                                    </span>
+                                    <span className="text-[10px] text-zinc-500 font-mono select-all truncate">
+                                      {email}
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={() => handleRemoveCoOwner(email)}
+                                    className="text-[10px] font-black uppercase text-stone-400 hover:text-rose-400 transition-all px-2.5 py-1.5 rounded-lg hover:bg-rose-500/10 shrink-0 border border-transparent hover:border-rose-500/20 cursor-pointer"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              );
+                            })
+                          ) : null}
                         </div>
-                      ) : (
-                        <p className="text-zinc-600 text-xs italic font-serif">No co-owners added yet. Only you are the administrator of this room.</p>
-                      )}
+                      </div>
                     </div>
                   )}
 

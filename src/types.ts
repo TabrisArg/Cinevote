@@ -16,6 +16,7 @@ export interface VotingList {
   releaseTime?: string; // ISO string representing scheduled release countdown
   lastReleasedMovieId?: string;
   rules?: string | string[];
+  rulesTitle?: string;
   repeatingSchedule?: RepeatingSchedule;
   coOwners?: string[];
   frozenMovieId?: string | null;
