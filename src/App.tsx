@@ -25,7 +25,8 @@ import {
   AlertTriangle,
   Clock,
   Ticket,
-  Clapperboard
+  Clapperboard,
+  Info
 } from "lucide-react";
 import { db, auth, googleProvider } from "./firebase";
 import { signInWithPopup, signInWithRedirect, getRedirectResult, signOut, User } from "firebase/auth";
@@ -128,6 +129,12 @@ export default function App() {
   const [isEditingRules, setIsEditingRules] = useState(false);
   const [rulesList, setRulesList] = useState<string[]>([]);
   const [newRuleInput, setNewRuleInput] = useState("");
+  const [rulesDisplayType, setRulesDisplayType] = useState<"unordered" | "ordered">(() => {
+    return (localStorage.getItem("cinevote_rules_display_type") as "unordered" | "ordered") || "unordered";
+  });
+
+  // Changelog State
+  const [showChangelog, setShowChangelog] = useState(false);
 
   const getRulesArray = (rules: any): string[] => {
     if (!rules) return [];
@@ -393,6 +400,72 @@ export default function App() {
     };
   }, [recentListIds]);
 
+  // Auto-freeze the top movie when the countdown enters the 24-hour frozen state
+  useEffect(() => {
+    if (!activeList || !currentRoute.listId || !timeLeft || !timeLeft.isFrozen) return;
+    if (activeList.frozenMovieId) return; // Already frozen
+    if (movieSuggestions.length === 0) return; // No movies to freeze
+
+    const freezeTopMovieInDb = async () => {
+      // Sort movie suggestions to find the top movie before freezing
+      const sorted = [...movieSuggestions].sort((a, b) => {
+        const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
+        if (votesDiff !== 0) return votesDiff;
+        const timeA = a.createdAt?.seconds || (a.createdAt as any)?.seconds || 0;
+        const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
+        return timeB - timeA;
+      });
+
+      const topMovie = sorted[0];
+      if (!topMovie) return;
+
+      try {
+        const listRef = doc(db, "lists", currentRoute.listId);
+        await updateDoc(listRef, {
+          frozenMovieId: topMovie.id
+        });
+        console.log(`Auto-froze top movie in Firestore: ${topMovie.title} (${topMovie.id})`);
+      } catch (err) {
+        console.error("Failed to auto-freeze top movie in database:", err);
+      }
+    };
+
+    freezeTopMovieInDb();
+  }, [activeList, currentRoute.listId, timeLeft?.isFrozen, movieSuggestions]);
+
+  // Prevent curtains animation on newly added movies
+  useEffect(() => {
+    if (movieSuggestions.length === 0) return;
+
+    let hasUpdates = false;
+    const updatedCurtains = { ...openedCurtains };
+
+    movieSuggestions.forEach((movie) => {
+      // Check if movie was created extremely recently
+      const createdTime = movie.createdAt
+        ? (movie.createdAt.seconds 
+            ? movie.createdAt.seconds * 1000 
+            : ((movie.createdAt as any)._seconds ? (movie.createdAt as any)._seconds * 1000 : new Date(movie.createdAt).getTime()))
+        : Date.now();
+
+      const isVeryRecent = (Date.now() - createdTime) < 15000; // 15 seconds threshold
+      if (isVeryRecent) {
+        if (!updatedCurtains[movie.id]) {
+          updatedCurtains[movie.id] = true;
+          hasUpdates = true;
+        }
+        if (!localStorage.getItem(`cinevote_curtains_${movie.id}`)) {
+          localStorage.setItem(`cinevote_curtains_${movie.id}`, "true");
+        }
+      }
+    });
+
+    if (hasUpdates) {
+      setOpenedCurtains(updatedCurtains);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [movieSuggestions]);
+
   // Room Listener (when currentRoute.path is 'list' and has listId)
   useEffect(() => {
     if (currentRoute.path !== "list" || !currentRoute.listId) {
@@ -473,18 +546,24 @@ export default function App() {
     const listId = activeList.id;
 
     try {
-      // Find the movie with the highest votes
-      const sorted = [...movieSuggestions].sort((a, b) => {
-        const votesA = a.voterIds?.length || 0;
-        const votesB = b.voterIds?.length || 0;
-        if (votesB !== votesA) return votesB - votesA;
-        // Tie-breaker: older suggestion first
-        const timeA = a.createdAt?.seconds || 0;
-        const timeB = b.createdAt?.seconds || 0;
-        return timeA - timeB;
-      });
+      // Find the movie to be released (use the frozen movie if set, otherwise fallback to highest votes)
+      let topMovie = activeList.frozenMovieId 
+        ? movieSuggestions.find(m => m.id === activeList.frozenMovieId) 
+        : null;
 
-      const topMovie = sorted[0];
+      if (!topMovie) {
+        const sorted = [...movieSuggestions].sort((a, b) => {
+          const votesA = a.voterIds?.length || 0;
+          const votesB = b.voterIds?.length || 0;
+          if (votesB !== votesA) return votesB - votesA;
+          // Tie-breaker: older suggestion first
+          const timeA = a.createdAt?.seconds || 0;
+          const timeB = b.createdAt?.seconds || 0;
+          return timeA - timeB;
+        });
+        topMovie = sorted[0];
+      }
+
       if (!topMovie) return;
 
       // 1. Instantly update list document to clear releaseTime or advance to next scheduled date
@@ -506,7 +585,8 @@ export default function App() {
 
       await updateDoc(listRef, {
         releaseTime: nextReleaseTime,
-        lastReleasedMovieId: topMovie.id
+        lastReleasedMovieId: topMovie.id,
+        frozenMovieId: null
       });
 
       // 2. Add to watched collection
@@ -1007,7 +1087,8 @@ export default function App() {
           const listRef = doc(db, "lists", listId);
           await updateDoc(listRef, {
             releaseTime: null,
-            repeatingSchedule: null
+            repeatingSchedule: null,
+            frozenMovieId: null
           });
         } catch (err) {
           console.error("Failed to cancel release countdown:", err);
@@ -1352,6 +1433,12 @@ export default function App() {
 
   // Simple sorting logic for suggestions (Sort by Vote descending, then by suggestion date)
   const sortedMovieSuggestions = [...movieSuggestions].sort((a, b) => {
+    // If we have a frozen movie ID on the list, it should always be first
+    if (activeList?.frozenMovieId) {
+      if (a.id === activeList.frozenMovieId) return -1;
+      if (b.id === activeList.frozenMovieId) return 1;
+    }
+
     const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
     if (votesDiff !== 0) return votesDiff;
     // Fallback: newest suggestions first (using seconds if available, otherwise 0)
@@ -1861,21 +1948,53 @@ export default function App() {
 
                   {/* ROOM RULES PANEL */}
                   <div className="bg-zinc-900/40 border border-zinc-800 p-5 rounded-2xl shadow-xl space-y-3 relative overflow-hidden">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <h3 className="font-serif font-black text-amber-400 text-sm sm:text-base uppercase tracking-widest flex items-center gap-2">
                         <Clapperboard className="w-4 h-4 text-amber-500" />
                         Room Rules
                       </h3>
-                      {isAdminOfRoom && (
-                        <button
-                          onClick={() => {
-                            setIsEditingRules(!isEditingRules);
-                          }}
-                          className="text-xs text-amber-300 hover:text-amber-200 font-extrabold uppercase tracking-wider bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 px-2 py-1 rounded"
-                        >
-                          {isEditingRules ? "Cancel" : "Edit Rules"}
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                        <div className="flex items-center gap-0.5 bg-zinc-950 p-0.5 rounded-lg border border-zinc-850">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRulesDisplayType("unordered");
+                              localStorage.setItem("cinevote_rules_display_type", "unordered");
+                            }}
+                            className={`px-2.5 py-0.5 text-[9px] font-black uppercase rounded-md transition-all cursor-pointer ${
+                              rulesDisplayType === "unordered"
+                                ? "bg-amber-500 text-black shadow-md font-black"
+                                : "text-zinc-400 hover:text-zinc-200"
+                            }`}
+                          >
+                            Bullets
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRulesDisplayType("ordered");
+                              localStorage.setItem("cinevote_rules_display_type", "ordered");
+                            }}
+                            className={`px-2.5 py-0.5 text-[9px] font-black uppercase rounded-md transition-all cursor-pointer ${
+                              rulesDisplayType === "ordered"
+                                ? "bg-amber-500 text-black shadow-md font-black"
+                                : "text-zinc-400 hover:text-zinc-200"
+                            }`}
+                          >
+                            Numbered
+                          </button>
+                        </div>
+                        {isAdminOfRoom && (
+                          <button
+                            onClick={() => {
+                              setIsEditingRules(!isEditingRules);
+                            }}
+                            className="text-xs text-amber-300 hover:text-amber-200 font-extrabold uppercase tracking-wider bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 px-2 py-1 rounded"
+                          >
+                            {isEditingRules ? "Cancel" : "Edit Rules"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     
                     {isEditingRules ? (
@@ -1939,13 +2058,25 @@ export default function App() {
                       </div>
                     ) : (
                       rulesList.length > 0 ? (
-                        <ul className="list-disc pl-5 space-y-1.5 text-zinc-300 text-xs sm:text-sm font-medium">
-                          {rulesList.map((rule, index) => (
-                            <li key={index} className="leading-relaxed">
-                              {rule}
-                            </li>
-                          ))}
-                        </ul>
+                        rulesDisplayType === "unordered" ? (
+                          <ul className="space-y-2 text-zinc-300 text-xs sm:text-sm font-medium pl-1">
+                            {rulesList.map((rule, index) => (
+                              <li key={index} className="leading-relaxed flex items-start gap-2.5">
+                                <span className="text-amber-400 font-bold select-none mt-0.5 shrink-0">&bull;</span>
+                                <span className="flex-1">{rule}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <ul className="space-y-2 text-zinc-300 text-xs sm:text-sm font-medium pl-1">
+                            {rulesList.map((rule, index) => (
+                              <li key={index} className="leading-relaxed flex items-start gap-2.5">
+                                <span className="text-amber-400 font-bold font-mono text-xs select-none mt-0.5 shrink-0">{index + 1}.</span>
+                                <span className="flex-1">{rule}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )
                       ) : (
                         <p className="text-zinc-500 text-xs italic font-serif leading-relaxed">
                           No rules have been set for this movie room yet.
@@ -3442,12 +3573,98 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* CHANGELOG MODAL */}
+      <AnimatePresence>
+        {showChangelog && (
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowChangelog(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-sm animate-fade-in"
+            />
+
+            {/* Modal Content */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="bg-zinc-900 border-2 border-amber-500/20 max-w-md w-full rounded-2xl p-6 shadow-2xl relative z-10 space-y-4 font-sans text-left"
+            >
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                <h3 className="font-serif font-black text-amber-400 text-base uppercase tracking-widest flex items-center gap-2">
+                  <Film className="w-5 h-5 text-amber-500 animate-pulse" />
+                  Cinevote v1.1 Changelog
+                </h3>
+                <button
+                  onClick={() => setShowChangelog(false)}
+                  className="text-zinc-500 hover:text-zinc-200 transition-colors text-lg font-bold cursor-pointer"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div className="space-y-4 text-xs leading-relaxed max-h-[300px] overflow-y-auto pr-1">
+                <div className="space-y-2">
+                  <h4 className="text-amber-300 font-bold uppercase tracking-wider font-mono">New Features & Improvements</h4>
+                  <ul className="space-y-2.5 text-zinc-300 font-medium">
+                    <li className="flex items-start gap-2.5">
+                      <span className="text-amber-400 font-bold select-none">•</span>
+                      <span className="flex-1"><strong>Rule Display Layouts</strong>: Change room rules display on the fly! Toggle between Bullet and Numbered list styles, styled with signature high-contrast golden indices.</span>
+                    </li>
+                    <li className="flex items-start gap-2.5">
+                      <span className="text-amber-400 font-bold select-none">•</span>
+                      <span className="flex-1"><strong>Countdown Watcher & Auto-Freeze</strong>: Added protection against last-minute voting manipulation. Exactly 24 hours before movie release, the top movie automatically freezes at the top of the queue and stays locked until countdown finishes.</span>
+                    </li>
+                    <li className="flex items-start gap-2.5">
+                      <span className="text-amber-400 font-bold select-none">•</span>
+                      <span className="flex-1"><strong>Smarter Curtains Animation</strong>: Curtains reveal animations are now reserved exclusively for the actual frozen winner movie to prevent sudden animations during nomination stages.</span>
+                    </li>
+                    <li className="flex items-start gap-2.5">
+                      <span className="text-amber-400 font-bold select-none">•</span>
+                      <span className="flex-1"><strong>Persistent Room Sync</strong>: Recently visited voting lists and custom discussion rooms are automatically stored and synchronized with logged-in user profiles.</span>
+                    </li>
+                    <li className="flex items-start gap-2.5">
+                      <span className="text-amber-400 font-bold select-none">•</span>
+                      <span className="flex-1"><strong>Date Picker Visibility</strong>: The date and time picker input calendar icon is now inverted to match our gorgeous cinema-dark theme.</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowChangelog(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-black uppercase bg-amber-500 hover:bg-amber-600 text-black border border-amber-400 transition-colors cursor-pointer"
+                >
+                  Close Changelog
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* FOOTER */}
       <footer className="bg-zinc-950/40 border-t border-zinc-900 py-6 text-zinc-500 text-xs font-semibold backdrop-blur-md mt-auto">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Film className="w-4 h-4 text-amber-500" />
+          <div className="flex items-center gap-3">
+            <Film className="w-4 h-4 text-amber-500 animate-pulse" />
             <span>Cinevote &copy; 2026. Made for film buffs and cinephiles.</span>
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowChangelog(true)}
+              className="text-[10px] text-amber-400 hover:text-amber-300 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 px-3 py-1.5 rounded-lg transition-all font-black uppercase tracking-wider shadow-md flex items-center gap-1.5 cursor-pointer"
+            >
+              <Info className="w-3.5 h-3.5 text-amber-500" />
+              v1.1 Changelog
+            </button>
           </div>
         </div>
       </footer>

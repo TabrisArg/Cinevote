@@ -39,6 +39,10 @@
         "lastReleasedMovieId": {
           "type": "string",
           "description": "ID of the last released movie"
+        },
+        "frozenMovieId": {
+          "type": "string",
+          "description": "ID of the movie frozen as top choice 24 hours before release"
         }
       },
       "required": ["title", "creatorId", "creatorName"]

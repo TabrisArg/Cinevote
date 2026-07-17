@@ -18,6 +18,7 @@ export interface VotingList {
   rules?: string | string[];
   repeatingSchedule?: RepeatingSchedule;
   coOwners?: string[];
+  frozenMovieId?: string | null;
 }
 
 export interface Argument {
