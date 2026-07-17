@@ -153,7 +153,7 @@ export default function App() {
   const [openedCurtains, setOpenedCurtains] = useState<Record<string, boolean>>({});
 
   // UI Notification Toasts
-  const [copiedNotification, setCopiedNotification] = useState(false);
+  const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
 
   // Auto-clear error messages after 30 seconds
@@ -1389,8 +1389,16 @@ export default function App() {
   const copyInviteLink = () => {
     const url = window.location.href;
     navigator.clipboard.writeText(url);
-    setCopiedNotification(true);
-    setTimeout(() => setCopiedNotification(false), 2000);
+    setCopiedMessage("Invite Link Copied!");
+    setTimeout(() => setCopiedMessage(null), 2000);
+  };
+
+  // Helper utility to copy room code
+  const copyRoomCode = () => {
+    if (!activeList?.id) return;
+    navigator.clipboard.writeText(activeList.id);
+    setCopiedMessage("Room Code Copied!");
+    setTimeout(() => setCopiedMessage(null), 2000);
   };
 
   // Handle changing alias name
@@ -1532,7 +1540,7 @@ export default function App() {
 
       {/* COPIED TOAST */}
       <AnimatePresence>
-        {copiedNotification && (
+        {copiedMessage && (
           <motion.div 
             initial={{ opacity: 0, scale: 0.9, y: 50 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1540,7 +1548,7 @@ export default function App() {
             className="fixed bottom-8 right-8 z-50 bg-amber-500 text-black font-extrabold px-6 py-3 rounded-full shadow-lg border border-amber-400 flex items-center gap-2"
           >
             <Check className="w-5 h-5 text-black stroke-[3]" />
-            <span>Invite Link Copied!</span>
+            <span>{copiedMessage}</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1915,31 +1923,62 @@ export default function App() {
                       {activeList.description && (
                         <p className="text-zinc-300 text-xs sm:text-sm max-w-3xl leading-relaxed font-medium">{activeList.description}</p>
                       )}
-                      <div className="flex items-center gap-3 pt-1 text-[11px] text-zinc-400 font-semibold uppercase tracking-widest">
+                      <div className="flex items-center gap-3 pt-1 text-[11px] text-zinc-400 font-semibold uppercase tracking-widest flex-wrap">
                         <span>Created by: <strong className="text-amber-300 font-bold">{activeList.creatorName}</strong></span>
                         <span>&bull;</span>
-                        <span className="font-mono text-amber-500/80">{activeList.id}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-zinc-500 font-extrabold">Code:</span>
+                          <button
+                            onClick={copyRoomCode}
+                            title="Click to copy room code"
+                            className="font-mono text-amber-500/80 hover:text-amber-400 hover:underline transition-all flex items-center gap-1 cursor-pointer bg-transparent border-none p-0"
+                          >
+                            <span>{activeList.id}</span>
+                            <Ticket className="w-3 h-3 shrink-0 text-amber-500/70" />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 w-full md:w-auto shrink-0 border-t md:border-t-0 pt-4 md:pt-0 border-zinc-800">
+                    <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto shrink-0 border-t md:border-t-0 pt-4 md:pt-0 border-zinc-800">
                       <button 
                         onClick={copyInviteLink}
-                        className={`flex-1 md:flex-none flex items-center justify-center gap-2 font-black px-4 py-2.5 rounded-xl text-xs transition-all shadow-md active:scale-95 border ${
-                          copiedNotification 
+                        className={`flex-1 md:flex-none flex items-center justify-center gap-2 font-black px-4 py-2.5 rounded-xl text-xs transition-all shadow-md active:scale-95 border cursor-pointer ${
+                          copiedMessage === "Invite Link Copied!"
                             ? "bg-emerald-500 hover:bg-emerald-600 text-black border-emerald-400" 
                             : "bg-amber-500 hover:bg-amber-600 text-black border-amber-400"
                         }`}
                       >
-                        {copiedNotification ? (
+                        {copiedMessage === "Invite Link Copied!" ? (
                           <>
                             <Check className="w-4 h-4 text-black stroke-[3]" />
-                            <span>Invite Link Copied!</span>
+                            <span>URL Copied!</span>
                           </>
                         ) : (
                           <>
                             <Share2 className="w-4 h-4 text-black" />
-                            <span>Copy Invite Link</span>
+                            <span>Copy Room URL</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button 
+                        onClick={copyRoomCode}
+                        className={`flex-1 md:flex-none flex items-center justify-center gap-2 font-black px-4 py-2.5 rounded-xl text-xs transition-all shadow-md active:scale-95 border cursor-pointer ${
+                          copiedMessage === "Room Code Copied!"
+                            ? "bg-emerald-500 hover:bg-emerald-600 text-black border-emerald-400" 
+                            : "bg-zinc-800 hover:bg-zinc-750 text-amber-400 border-zinc-700"
+                        }`}
+                      >
+                        {copiedMessage === "Room Code Copied!" ? (
+                          <>
+                            <Check className="w-4 h-4 text-black stroke-[3]" />
+                            <span className="text-black">Code Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Ticket className="w-4 h-4 text-amber-500" />
+                            <span>Copy Room Code</span>
                           </>
                         )}
                       </button>
