@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, FormEvent } from "react";
+import { useState, useEffect, useRef, useMemo, FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Film, 
@@ -88,7 +88,96 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"active" | "watched">("active");
   const [timeLeft, setTimeLeft] = useState<{ months: number; weeks: number; days: number; hours: number; minutes: number; seconds: number; isFrozen: boolean; isOver: boolean } | null>(null);
   const [loadingActiveList, setLoadingActiveList] = useState(false);
-  const frozenMovieIdLockRef = useRef<string | null>(null);
+  const frozenMovieLockRef = useRef<{ listId: string; releaseTime: string; movieId: string } | null>(null);
+
+  // Determine if the current active list is in a frozen state (24-hour countdown window or frozen lock)
+  const isWithin24HourWindow = useMemo(() => {
+    if (!activeList?.releaseTime) return false;
+    const releaseMs = new Date(activeList.releaseTime).getTime();
+    const diff = releaseMs - Date.now();
+    return diff <= 24 * 60 * 60 * 1000 && diff > 0;
+  }, [activeList?.releaseTime, timeLeft]);
+
+  const currentListId = currentRoute.listId || activeList?.id;
+  const currentReleaseTime = activeList?.releaseTime;
+
+  const isListFrozen = !!(
+    timeLeft?.isFrozen || 
+    isWithin24HourWindow || 
+    activeList?.frozenMovieId || 
+    (frozenMovieLockRef.current && 
+     frozenMovieLockRef.current.listId === currentListId &&
+     frozenMovieLockRef.current.releaseTime === currentReleaseTime)
+  );
+
+  // Compute effective frozen movie ID, ensuring it is permanently locked once selected
+  const effectiveFrozenMovieId = useMemo(() => {
+    if (!isListFrozen || !currentListId || !currentReleaseTime) {
+      frozenMovieLockRef.current = null;
+      return null;
+    }
+
+    // 1. First check if Firestore activeList already has frozenMovieId
+    if (activeList?.frozenMovieId && movieSuggestions.some((m) => m.id === activeList.frozenMovieId)) {
+      frozenMovieLockRef.current = { listId: currentListId, releaseTime: currentReleaseTime, movieId: activeList.frozenMovieId };
+      return activeList.frozenMovieId;
+    }
+
+    // 2. Check if local lock ref is already set for this list and releaseTime
+    if (
+      frozenMovieLockRef.current &&
+      frozenMovieLockRef.current.listId === currentListId &&
+      frozenMovieLockRef.current.releaseTime === currentReleaseTime &&
+      movieSuggestions.some((m) => m.id === frozenMovieLockRef.current!.movieId)
+    ) {
+      return frozenMovieLockRef.current.movieId;
+    }
+
+    // 3. Fallback for the first moment of freezing: pick top movie AT THIS EXACT INSTANT and lock it permanently
+    if (movieSuggestions.length === 0) return null;
+
+    const sorted = [...movieSuggestions].sort((a, b) => {
+      const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
+      if (votesDiff !== 0) return votesDiff;
+      const timeA = a.createdAt?.seconds || (a.createdAt as any)?.seconds || 0;
+      const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
+      return timeB - timeA;
+    });
+
+    const topMovie = sorted[0];
+    if (!topMovie) return null;
+
+    // LOCK IMMEDIATELY in ref so subsequent vote changes NEVER displace it
+    frozenMovieLockRef.current = { listId: currentListId, releaseTime: currentReleaseTime, movieId: topMovie.id };
+
+    // Optimistically update activeList state
+    setActiveList((prev) => prev ? { ...prev, frozenMovieId: topMovie.id } : prev);
+
+    // Save lock to Firestore
+    const listRef = doc(db, "lists", currentListId);
+    updateDoc(listRef, {
+      frozenMovieId: topMovie.id
+    }).catch((err) => {
+      console.error("Failed to persist frozen movie lock to Firestore:", err);
+    });
+
+    return topMovie.id;
+  }, [isListFrozen, activeList?.frozenMovieId, currentReleaseTime, currentListId, movieSuggestions]);
+
+  const sortedMovieSuggestions = useMemo(() => {
+    return [...movieSuggestions].sort((a, b) => {
+      if (effectiveFrozenMovieId) {
+        if (a.id === effectiveFrozenMovieId) return -1;
+        if (b.id === effectiveFrozenMovieId) return 1;
+      }
+
+      const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
+      if (votesDiff !== 0) return votesDiff;
+      const timeA = a.createdAt?.seconds || (a.createdAt as any)?.seconds || 0;
+      const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
+      return timeB - timeA;
+    });
+  }, [movieSuggestions, effectiveFrozenMovieId]);
 
   // Movie Search State (Suggestion Form)
   const [movieQuery, setMovieQuery] = useState("");
@@ -487,57 +576,16 @@ export default function App() {
     };
   }, [recentListIds]);
 
-  // Auto-freeze the top movie when the countdown enters the 24-hour frozen state
+  // Sync frozenMovieLockRef with Firestore activeList.frozenMovieId
   useEffect(() => {
-    if (!activeList || !currentRoute.listId || !timeLeft || !timeLeft.isFrozen) {
-      if (!activeList?.frozenMovieId) {
-        frozenMovieIdLockRef.current = null;
-      }
-      return;
+    if (activeList?.frozenMovieId && currentRoute.listId && activeList?.releaseTime) {
+      frozenMovieLockRef.current = {
+        listId: currentRoute.listId,
+        releaseTime: activeList.releaseTime,
+        movieId: activeList.frozenMovieId
+      };
     }
-
-    if (activeList.frozenMovieId) {
-      frozenMovieIdLockRef.current = activeList.frozenMovieId;
-      return; // Already frozen
-    }
-
-    if (movieSuggestions.length === 0) return; // No movies to freeze
-
-    // If we have already locked a movie locally during this freeze period, keep it
-    if (frozenMovieIdLockRef.current) return;
-
-    const freezeTopMovieInDb = async () => {
-      // Sort movie suggestions to find the top movie before freezing
-      const sorted = [...movieSuggestions].sort((a, b) => {
-        const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
-        if (votesDiff !== 0) return votesDiff;
-        const timeA = a.createdAt?.seconds || (a.createdAt as any)?.seconds || 0;
-        const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
-        return timeB - timeA;
-      });
-
-      const topMovie = sorted[0];
-      if (!topMovie) return;
-
-      // Lock locally immediately so subsequent votes on other movies won't shift top selection
-      frozenMovieIdLockRef.current = topMovie.id;
-
-      // Optimistically update activeList state
-      setActiveList((prev) => prev ? { ...prev, frozenMovieId: topMovie.id } : prev);
-
-      try {
-        const listRef = doc(db, "lists", currentRoute.listId);
-        await updateDoc(listRef, {
-          frozenMovieId: topMovie.id
-        });
-        console.log(`Auto-froze top movie in Firestore: ${topMovie.title} (${topMovie.id})`);
-      } catch (err) {
-        console.error("Failed to auto-freeze top movie in database:", err);
-      }
-    };
-
-    freezeTopMovieInDb();
-  }, [activeList, currentRoute.listId, timeLeft?.isFrozen, movieSuggestions]);
+  }, [activeList?.frozenMovieId, activeList?.releaseTime, currentRoute.listId]);
 
   // Prevent curtains animation on newly added movies
   useEffect(() => {
@@ -652,10 +700,10 @@ export default function App() {
     const listId = activeList.id;
 
     try {
-      // Find the movie to be released (use the frozen movie if set, otherwise fallback to highest votes)
-      let topMovie = activeList.frozenMovieId 
-        ? movieSuggestions.find(m => m.id === activeList.frozenMovieId) 
-        : null;
+      // Find the movie to be released (use the effective frozen movie if set, otherwise fallback to highest votes)
+      let topMovie = effectiveFrozenMovieId 
+        ? movieSuggestions.find(m => m.id === effectiveFrozenMovieId) 
+        : (activeList.frozenMovieId ? movieSuggestions.find(m => m.id === activeList.frozenMovieId) : null);
 
       if (!topMovie) {
         const sorted = [...movieSuggestions].sort((a, b) => {
@@ -689,6 +737,7 @@ export default function App() {
         }
       }
 
+      frozenMovieLockRef.current = null;
       await updateDoc(listRef, {
         releaseTime: nextReleaseTime,
         lastReleasedMovieId: topMovie.id,
@@ -1176,12 +1225,14 @@ export default function App() {
       confirmText: "Cancel Schedule",
       onConfirm: async () => {
         try {
+          frozenMovieLockRef.current = null;
           const listRef = doc(db, "lists", listId);
           await updateDoc(listRef, {
             releaseTime: null,
             repeatingSchedule: null,
             frozenMovieId: null
           });
+          setActiveList(prev => prev ? { ...prev, releaseTime: null, repeatingSchedule: null, frozenMovieId: null } : prev);
         } catch (err) {
           console.error("Failed to cancel release countdown:", err);
           setErrorMessage("Could not cancel the release countdown.");
@@ -1335,11 +1386,8 @@ export default function App() {
   const handleToggleVote = async (movie: MovieSuggestion) => {
     if (!currentRoute.listId) return;
 
-    const effectiveFrozenId = activeList?.frozenMovieId || (timeLeft?.isFrozen ? frozenMovieIdLockRef.current : null);
-    const isFrozenMovie = (movie.id === effectiveFrozenId) || (sortedMovieSuggestions[0]?.id === movie.id && (timeLeft?.isFrozen || !!activeList?.frozenMovieId));
-
-    if ((timeLeft?.isFrozen || activeList?.frozenMovieId) && isFrozenMovie) {
-      setErrorMessage("Voting on the next movie selection is frozen!");
+    if (isListFrozen && movie.id === effectiveFrozenMovieId) {
+      setErrorMessage("Voting on the selected movie is locked!");
       return;
     }
 
@@ -1462,6 +1510,11 @@ export default function App() {
       onConfirm: async () => {
         try {
           await deleteDoc(doc(db, "lists", listId, "movies", movieId));
+          if (effectiveFrozenMovieId === movieId) {
+            frozenMovieLockRef.current = null;
+            await updateDoc(doc(db, "lists", listId), { frozenMovieId: null });
+            setActiveList(prev => prev ? { ...prev, frozenMovieId: null } : prev);
+          }
         } catch (err) {
           console.error("Failed to delete suggestion:", err);
         }
@@ -1522,24 +1575,6 @@ export default function App() {
     window.location.hash = `#/list/${targetId}`;
     setJoinRoomId("");
   };
-
-  // Simple sorting logic for suggestions (Sort by Vote descending, then by suggestion date)
-  const effectiveFrozenMovieId = activeList?.frozenMovieId || (timeLeft?.isFrozen ? frozenMovieIdLockRef.current : null);
-
-  const sortedMovieSuggestions = [...movieSuggestions].sort((a, b) => {
-    // If we have a frozen movie ID on the list or during a frozen countdown, it should always be first
-    if (effectiveFrozenMovieId) {
-      if (a.id === effectiveFrozenMovieId) return -1;
-      if (b.id === effectiveFrozenMovieId) return 1;
-    }
-
-    const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
-    if (votesDiff !== 0) return votesDiff;
-    // Fallback: newest suggestions first (using seconds if available, otherwise 0)
-    const timeA = a.createdAt?.seconds || (a.createdAt as any)?.seconds || 0;
-    const timeB = b.createdAt?.seconds || (b.createdAt as any)?.seconds || 0;
-    return timeB - timeA;
-  });
 
   const isOriginalCreator = !!(activeList && user && activeList.creatorId === user.uid);
   const isCoOwner = !!(
@@ -2958,7 +2993,7 @@ export default function App() {
                                 const isOwner = movie.suggestedById === (user?.uid || sessionId) || activeList.creatorId === user?.uid || isAdminOfRoom;
                                 
                                 const isTopMovie = index === 0;
-                                const isGoldHighlighted = !!((timeLeft?.isFrozen || activeList?.frozenMovieId || effectiveFrozenMovieId) && (movie.id === effectiveFrozenMovieId || isTopMovie));
+                                const isGoldHighlighted = isListFrozen && movie.id === effectiveFrozenMovieId;
 
                                 return (
                                   <motion.div
