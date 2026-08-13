@@ -88,6 +88,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"active" | "watched">("active");
   const [timeLeft, setTimeLeft] = useState<{ months: number; weeks: number; days: number; hours: number; minutes: number; seconds: number; isFrozen: boolean; isOver: boolean } | null>(null);
   const [loadingActiveList, setLoadingActiveList] = useState(false);
+  const frozenMovieIdLockRef = useRef<string | null>(null);
 
   // Movie Search State (Suggestion Form)
   const [movieQuery, setMovieQuery] = useState("");
@@ -488,9 +489,22 @@ export default function App() {
 
   // Auto-freeze the top movie when the countdown enters the 24-hour frozen state
   useEffect(() => {
-    if (!activeList || !currentRoute.listId || !timeLeft || !timeLeft.isFrozen) return;
-    if (activeList.frozenMovieId) return; // Already frozen
+    if (!activeList || !currentRoute.listId || !timeLeft || !timeLeft.isFrozen) {
+      if (!activeList?.frozenMovieId) {
+        frozenMovieIdLockRef.current = null;
+      }
+      return;
+    }
+
+    if (activeList.frozenMovieId) {
+      frozenMovieIdLockRef.current = activeList.frozenMovieId;
+      return; // Already frozen
+    }
+
     if (movieSuggestions.length === 0) return; // No movies to freeze
+
+    // If we have already locked a movie locally during this freeze period, keep it
+    if (frozenMovieIdLockRef.current) return;
 
     const freezeTopMovieInDb = async () => {
       // Sort movie suggestions to find the top movie before freezing
@@ -504,6 +518,12 @@ export default function App() {
 
       const topMovie = sorted[0];
       if (!topMovie) return;
+
+      // Lock locally immediately so subsequent votes on other movies won't shift top selection
+      frozenMovieIdLockRef.current = topMovie.id;
+
+      // Optimistically update activeList state
+      setActiveList((prev) => prev ? { ...prev, frozenMovieId: topMovie.id } : prev);
 
       try {
         const listRef = doc(db, "lists", currentRoute.listId);
@@ -1315,8 +1335,10 @@ export default function App() {
   const handleToggleVote = async (movie: MovieSuggestion) => {
     if (!currentRoute.listId) return;
 
-    const isTopMovie = sortedMovieSuggestions[0]?.id === movie.id;
-    if (timeLeft?.isFrozen && isTopMovie) {
+    const effectiveFrozenId = activeList?.frozenMovieId || (timeLeft?.isFrozen ? frozenMovieIdLockRef.current : null);
+    const isFrozenMovie = (movie.id === effectiveFrozenId) || (sortedMovieSuggestions[0]?.id === movie.id && (timeLeft?.isFrozen || !!activeList?.frozenMovieId));
+
+    if ((timeLeft?.isFrozen || activeList?.frozenMovieId) && isFrozenMovie) {
       setErrorMessage("Voting on the next movie selection is frozen!");
       return;
     }
@@ -1502,11 +1524,13 @@ export default function App() {
   };
 
   // Simple sorting logic for suggestions (Sort by Vote descending, then by suggestion date)
+  const effectiveFrozenMovieId = activeList?.frozenMovieId || (timeLeft?.isFrozen ? frozenMovieIdLockRef.current : null);
+
   const sortedMovieSuggestions = [...movieSuggestions].sort((a, b) => {
-    // If we have a frozen movie ID on the list, it should always be first
-    if (activeList?.frozenMovieId) {
-      if (a.id === activeList.frozenMovieId) return -1;
-      if (b.id === activeList.frozenMovieId) return 1;
+    // If we have a frozen movie ID on the list or during a frozen countdown, it should always be first
+    if (effectiveFrozenMovieId) {
+      if (a.id === effectiveFrozenMovieId) return -1;
+      if (b.id === effectiveFrozenMovieId) return 1;
     }
 
     const votesDiff = (b.voterIds?.length || 0) - (a.voterIds?.length || 0);
@@ -2934,7 +2958,7 @@ export default function App() {
                                 const isOwner = movie.suggestedById === (user?.uid || sessionId) || activeList.creatorId === user?.uid || isAdminOfRoom;
                                 
                                 const isTopMovie = index === 0;
-                                const isGoldHighlighted = !!(timeLeft?.isFrozen && isTopMovie);
+                                const isGoldHighlighted = !!((timeLeft?.isFrozen || activeList?.frozenMovieId || effectiveFrozenMovieId) && (movie.id === effectiveFrozenMovieId || isTopMovie));
 
                                 return (
                                   <motion.div
