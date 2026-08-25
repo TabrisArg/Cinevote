@@ -90,7 +90,7 @@ export default function App() {
   const [loadingActiveList, setLoadingActiveList] = useState(false);
   const frozenMovieLockRef = useRef<{ listId: string; releaseTime: string; movieId: string } | null>(null);
 
-  // Determine if the current active list is in a frozen state (24-hour countdown window or frozen lock)
+  // Determine if the current active list is in a frozen state (strictly within 24-hour countdown window)
   const isWithin24HourWindow = useMemo(() => {
     if (!activeList?.releaseTime) return false;
     const releaseMs = new Date(activeList.releaseTime).getTime();
@@ -101,16 +101,15 @@ export default function App() {
   const currentListId = currentRoute.listId || activeList?.id;
   const currentReleaseTime = activeList?.releaseTime;
 
-  const isListFrozen = !!(
-    timeLeft?.isFrozen || 
-    isWithin24HourWindow || 
-    activeList?.frozenMovieId || 
-    (frozenMovieLockRef.current && 
-     frozenMovieLockRef.current.listId === currentListId &&
-     frozenMovieLockRef.current.releaseTime === currentReleaseTime)
-  );
+  // A list is strictly frozen ONLY when release time is 24 hours or less away and not over
+  const isListFrozen = useMemo(() => {
+    if (!currentReleaseTime) return false;
+    const releaseMs = new Date(currentReleaseTime).getTime();
+    const diff = releaseMs - Date.now();
+    return diff <= 24 * 60 * 60 * 1000 && diff > 0;
+  }, [currentReleaseTime, timeLeft]);
 
-  // Compute effective frozen movie ID, ensuring it is permanently locked once selected
+  // Compute effective frozen movie ID, ensuring it is permanently locked once selected within the 24-hour window
   const effectiveFrozenMovieId = useMemo(() => {
     if (!isListFrozen || !currentListId || !currentReleaseTime) {
       frozenMovieLockRef.current = null;
@@ -133,7 +132,7 @@ export default function App() {
       return frozenMovieLockRef.current.movieId;
     }
 
-    // 3. Fallback for the first moment of freezing: pick top movie AT THIS EXACT INSTANT and lock it permanently
+    // 3. Fallback for the first moment of freezing (entering the 24-hour window): pick top movie AT THIS EXACT INSTANT and lock it permanently
     if (movieSuggestions.length === 0) return null;
 
     const sorted = [...movieSuggestions].sort((a, b) => {
@@ -147,7 +146,7 @@ export default function App() {
     const topMovie = sorted[0];
     if (!topMovie) return null;
 
-    // LOCK IMMEDIATELY in ref so subsequent vote changes NEVER displace it
+    // LOCK IMMEDIATELY in ref so subsequent vote changes NEVER displace it during this 24-hour freeze
     frozenMovieLockRef.current = { listId: currentListId, releaseTime: currentReleaseTime, movieId: topMovie.id };
 
     // Optimistically update activeList state
@@ -576,16 +575,42 @@ export default function App() {
     };
   }, [recentListIds]);
 
-  // Sync frozenMovieLockRef with Firestore activeList.frozenMovieId
+  // Sync and clean up frozenMovieId based on the 24-hour release window
   useEffect(() => {
-    if (activeList?.frozenMovieId && currentRoute.listId && activeList?.releaseTime) {
-      frozenMovieLockRef.current = {
-        listId: currentRoute.listId,
-        releaseTime: activeList.releaseTime,
-        movieId: activeList.frozenMovieId
-      };
+    if (!activeList || !currentRoute.listId) return;
+
+    if (!activeList.releaseTime) {
+      if (activeList.frozenMovieId || frozenMovieLockRef.current) {
+        frozenMovieLockRef.current = null;
+        const listRef = doc(db, "lists", currentRoute.listId);
+        updateDoc(listRef, { frozenMovieId: null }).catch(console.error);
+        setActiveList((prev) => prev ? { ...prev, frozenMovieId: null } : prev);
+      }
+      return;
     }
-  }, [activeList?.frozenMovieId, activeList?.releaseTime, currentRoute.listId]);
+
+    const releaseMs = new Date(activeList.releaseTime).getTime();
+    const diff = releaseMs - Date.now();
+    const isWithin24Hours = diff <= 24 * 60 * 60 * 1000 && diff > 0;
+
+    if (isWithin24Hours) {
+      if (activeList.frozenMovieId) {
+        frozenMovieLockRef.current = {
+          listId: currentRoute.listId,
+          releaseTime: activeList.releaseTime,
+          movieId: activeList.frozenMovieId
+        };
+      }
+    } else {
+      // More than 24 hours away or in the past: ensure NO frozen movie lock is active
+      if (activeList.frozenMovieId || frozenMovieLockRef.current) {
+        frozenMovieLockRef.current = null;
+        const listRef = doc(db, "lists", currentRoute.listId);
+        updateDoc(listRef, { frozenMovieId: null }).catch(console.error);
+        setActiveList((prev) => prev ? { ...prev, frozenMovieId: null } : prev);
+      }
+    }
+  }, [activeList?.id, activeList?.frozenMovieId, activeList?.releaseTime, currentRoute.listId]);
 
   // Prevent curtains animation on newly added movies
   useEffect(() => {
@@ -1178,10 +1203,18 @@ export default function App() {
           frequencyUnit,
           startDate: startDateInput
         };
+        frozenMovieLockRef.current = null;
         await updateDoc(listRef, {
           releaseTime: new Date(startDateInput).toISOString(),
-          repeatingSchedule: repeatingObj
+          repeatingSchedule: repeatingObj,
+          frozenMovieId: null
         });
+        setActiveList(prev => prev ? { 
+          ...prev, 
+          releaseTime: new Date(startDateInput).toISOString(), 
+          repeatingSchedule: repeatingObj, 
+          frozenMovieId: null 
+        } : prev);
         
         // Reset local repeating state
         setSelectedDays([]);
@@ -1202,10 +1235,18 @@ export default function App() {
 
       try {
         const listRef = doc(db, "lists", listId);
+        frozenMovieLockRef.current = null;
         await updateDoc(listRef, {
           releaseTime: new Date(countdownInput).toISOString(),
-          repeatingSchedule: null
+          repeatingSchedule: null,
+          frozenMovieId: null
         });
+        setActiveList(prev => prev ? { 
+          ...prev, 
+          releaseTime: new Date(countdownInput).toISOString(), 
+          repeatingSchedule: null, 
+          frozenMovieId: null 
+        } : prev);
         setCountdownInput("");
       } catch (err) {
         console.error("Failed to set release countdown:", err);
