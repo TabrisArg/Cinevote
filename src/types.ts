@@ -48,8 +48,8 @@ export interface MovieSuggestion {
   createdAt: any; // Firestore Timestamp
   voterIds: string[]; // array of session/user IDs
   votersHistory?: VoteHistoryItem[];
-  pros: Argument[];
-  cons: Argument[];
+  pros?: Argument[];
+  cons?: Argument[];
   director?: string;
   genres?: string[];
   trailerUrl?: string;

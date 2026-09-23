@@ -11,9 +11,6 @@ import {
   Trash2, 
   PlusCircle, 
   Check, 
-  MessageSquare, 
-  Smile, 
-  Frown, 
   Search, 
   Sparkles, 
   Users, 
@@ -48,7 +45,7 @@ import {
   getDoc,
   getDocs
 } from "firebase/firestore";
-import { VotingList, MovieSuggestion, Argument, RepeatingSchedule } from "./types";
+import { VotingList, MovieSuggestion, RepeatingSchedule } from "./types";
 import { getOrCreateSessionId, getOrCreateAlias, saveAlias } from "./utils/names";
 import { fetchMoviesFromTMDB } from "./movieService";
 import { validateStartDate, calculateUpcomingOccurrences, formatRepeatingSchedule } from "./utils/schedule";
@@ -204,9 +201,6 @@ export default function App() {
 
   // Voters History Modal State
   const [viewingVotersMovie, setViewingVotersMovie] = useState<MovieSuggestion | null>(null);
-
-  // Argument input map (movieId -> pro/con text)
-  const [argumentInputs, setArgumentInputs] = useState<{ [key: string]: { type: "pro" | "con"; text: string } }>({});
 
   // Movie Editing State
   const [editingMovieId, setEditingMovieId] = useState<string | null>(null);
@@ -1090,8 +1084,6 @@ export default function App() {
             timestamp: Date.now()
           }
         ],
-        pros: [],
-        cons: [],
         tmdbId: selectedMovie.tmdbId || ""
       });
 
@@ -1470,7 +1462,7 @@ export default function App() {
     }
   };
 
-  // Suggestion Actions (Vote, Pros & Cons Argument)
+  // Suggestion Actions (Vote)
   const handleToggleVote = async (movie: MovieSuggestion) => {
     if (!currentRoute.listId) return;
 
@@ -1506,60 +1498,6 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to toggle vote:", err);
-    }
-  };
-
-  const handleAddArgument = async (movieId: string) => {
-    const input = argumentInputs[movieId];
-    if (!input || !input.text.trim() || !currentRoute.listId) return;
-
-    try {
-      const argument: Argument = {
-        id: "arg_" + Math.random().toString(36).substring(2, 11) + Date.now(),
-        text: input.text.trim(),
-        author: alias,
-        authorId: user?.uid || sessionId,
-        createdAt: Date.now()
-      };
-
-      const movieRef = doc(db, "lists", currentRoute.listId, "movies", movieId);
-      
-      if (input.type === "pro") {
-        await updateDoc(movieRef, {
-          pros: arrayUnion(argument)
-        });
-      } else {
-        await updateDoc(movieRef, {
-          cons: arrayUnion(argument)
-        });
-      }
-
-      // Clear input
-      setArgumentInputs((prev) => ({
-        ...prev,
-        [movieId]: { type: "pro", text: "" }
-      }));
-    } catch (err) {
-      console.error("Failed to add argument:", err);
-    }
-  };
-
-  const handleDeleteArgument = async (movie: MovieSuggestion, argument: Argument, type: "pro" | "con") => {
-    if (!currentRoute.listId) return;
-
-    try {
-      const movieRef = doc(db, "lists", currentRoute.listId, "movies", movie.id);
-      if (type === "pro") {
-        await updateDoc(movieRef, {
-          pros: arrayRemove(argument)
-        });
-      } else {
-        await updateDoc(movieRef, {
-          cons: arrayRemove(argument)
-        });
-      }
-    } catch (err) {
-      console.error("Failed to delete argument:", err);
     }
   };
 
@@ -1868,7 +1806,7 @@ export default function App() {
                   <span className="text-white uppercase tracking-wider">PLATFORM</span>
                 </h1>
                 <p className="text-amber-100/80 text-sm sm:text-base max-w-2xl mx-auto font-medium font-serif italic">
-                  Create custom watchlists, propose movies, cast your votes, and discuss pros and cons in real-time with your group.
+                  Create custom watchlists, propose movies, cast your votes, and collaborate in real-time with your group.
                 </p>
               </div>
 
@@ -1906,9 +1844,9 @@ export default function App() {
                   <div className="w-10 h-10 bg-amber-500 text-black font-black rounded-xl flex items-center justify-center border border-amber-400 font-mono text-base shadow-md">
                     03
                   </div>
-                  <h3 className="font-serif font-black text-amber-400 text-lg uppercase tracking-wider">Vote & Discuss</h3>
+                  <h3 className="font-serif font-black text-amber-400 text-lg uppercase tracking-wider">Vote & Decide</h3>
                   <p className="text-zinc-300 text-xs leading-relaxed font-medium">
-                    Propose movies with automatic TMDB details, cast votes in real-time, and discuss pros and cons together before watching.
+                    Propose movies with automatic TMDB details, cast votes in real-time, and decide what to watch together.
                   </p>
                 </div>
               </div>
@@ -3444,135 +3382,6 @@ export default function App() {
                                             </div>
                                           </>
                                         )}
-                                      </div>
-                                    </div>
-
-                                    {/* PROS & CONS TRICIDER ARGUMENTS VIEW */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-zinc-850 bg-zinc-950/20 border-t border-zinc-850">
-                                      {/* PROS COLUMN (GREEN) */}
-                                      <div className="p-4 space-y-3">
-                                        <div className="flex items-center gap-1.5 text-emerald-400 font-extrabold text-xs uppercase tracking-wider">
-                                          <Smile className="w-4 h-4" />
-                                          <span>Pros / Arguments In Favor ({movie.pros?.length || 0})</span>
-                                        </div>
-
-                                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                                          {(!movie.pros || movie.pros.length === 0) ? (
-                                            <p className="text-[10px] text-zinc-500 italic font-medium">No pro arguments added yet.</p>
-                                          ) : (
-                                            movie.pros.map((pro) => (
-                                              <div key={pro.id} className="bg-emerald-950/20 border border-emerald-900/30 p-2.5 rounded-lg space-y-1 relative group">
-                                                <p className="text-zinc-200 text-xs leading-relaxed pr-6 font-medium">{pro.text}</p>
-                                                <div className="flex items-center justify-between text-[9px] text-zinc-500 font-bold uppercase tracking-wider">
-                                                  <span>&mdash; {pro.author}</span>
-                                                  {(pro.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid || isAdminOfRoom) && (
-                                                    <button
-                                                      onClick={() => handleDeleteArgument(movie, pro, "pro")}
-                                                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
-                                                      title="Delete argument"
-                                                    >
-                                                      <Trash2 className="w-3 h-3" />
-                                                    </button>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            ))
-                                          )}
-                                        </div>
-
-                                        {/* Inline Add Pro Form */}
-                                        <div className="flex items-center gap-2 pt-2 border-t border-zinc-850">
-                                          <input
-                                            type="text"
-                                            placeholder="Why suggest this?"
-                                            value={argumentInputs[movie.id]?.type === "pro" ? argumentInputs[movie.id].text : ""}
-                                            onChange={(e) => setArgumentInputs((prev) => ({
-                                              ...prev,
-                                              [movie.id]: { type: "pro", text: e.target.value }
-                                            }))}
-                                            onKeyDown={(e) => {
-                                              if (e.key === "Enter") handleAddArgument(movie.id);
-                                            }}
-                                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-emerald-500/50 placeholder-zinc-500 font-medium"
-                                          />
-                                          <button
-                                            onClick={() => {
-                                              // Set type first then add
-                                              setArgumentInputs((prev) => ({
-                                                ...prev,
-                                                [movie.id]: { type: "pro", text: prev[movie.id]?.text || "" }
-                                              }));
-                                              setTimeout(() => handleAddArgument(movie.id), 20);
-                                            }}
-                                            className="bg-emerald-950/30 hover:bg-emerald-900/40 border border-emerald-800 p-2 rounded-lg text-emerald-400 transition-all active:scale-95 shrink-0"
-                                            title="Add pro argument"
-                                          >
-                                            <Plus className="w-3.5 h-3.5" />
-                                          </button>
-                                        </div>
-                                      </div>
-
-                                      {/* CONS COLUMN (RED) */}
-                                      <div className="p-4 space-y-3">
-                                        <div className="flex items-center gap-1.5 text-rose-400 font-extrabold text-xs uppercase tracking-wider">
-                                          <Frown className="w-4 h-4" />
-                                          <span>Cons / Arguments Against ({movie.cons?.length || 0})</span>
-                                        </div>
-
-                                        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                                          {(!movie.cons || movie.cons.length === 0) ? (
-                                            <p className="text-[10px] text-zinc-500 italic font-medium">No con arguments added yet.</p>
-                                          ) : (
-                                            movie.cons.map((con) => (
-                                              <div key={con.id} className="bg-rose-950/20 border border-rose-900/30 p-2.5 rounded-lg space-y-1 relative group text-zinc-100">
-                                                <p className="text-zinc-200 text-xs leading-relaxed pr-6 font-medium">{con.text}</p>
-                                                <div className="flex items-center justify-between text-[9px] text-zinc-500 font-bold uppercase tracking-wider">
-                                                  <span>&mdash; {con.author}</span>
-                                                  {(con.authorId === (user?.uid || sessionId) || activeList.creatorId === user?.uid || isAdminOfRoom) && (
-                                                    <button
-                                                      onClick={() => handleDeleteArgument(movie, con, "con")}
-                                                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 transition-opacity absolute top-2 right-2"
-                                                      title="Delete argument"
-                                                    >
-                                                      <Trash2 className="w-3 h-3" />
-                                                    </button>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            ))
-                                          )}
-                                        </div>
-
-                                        {/* Inline Add Con Form */}
-                                        <div className="flex items-center gap-2 pt-2 border-t border-zinc-850">
-                                          <input
-                                            type="text"
-                                            placeholder="Any reservations?"
-                                            value={argumentInputs[movie.id]?.type === "con" ? argumentInputs[movie.id].text : ""}
-                                            onChange={(e) => setArgumentInputs((prev) => ({
-                                              ...prev,
-                                              [movie.id]: { type: "con", text: e.target.value }
-                                            }))}
-                                            onKeyDown={(e) => {
-                                              if (e.key === "Enter") handleAddArgument(movie.id);
-                                            }}
-                                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-rose-500/50 placeholder-zinc-500 font-medium"
-                                          />
-                                          <button
-                                            onClick={() => {
-                                              // Set type first then add
-                                              setArgumentInputs((prev) => ({
-                                                ...prev,
-                                                [movie.id]: { type: "con", text: prev[movie.id]?.text || "" }
-                                              }));
-                                              setTimeout(() => handleAddArgument(movie.id), 20);
-                                            }}
-                                            className="bg-rose-950/30 hover:bg-rose-900/40 border border-rose-800 p-2 rounded-lg text-rose-400 transition-all active:scale-95 shrink-0"
-                                            title="Add con argument"
-                                          >
-                                            <Plus className="w-3.5 h-3.5" />
-                                          </button>
-                                        </div>
                                       </div>
                                     </div>
                                   </motion.div>
