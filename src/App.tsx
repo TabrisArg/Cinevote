@@ -86,7 +86,24 @@ export default function App() {
   const [movieSuggestions, setMovieSuggestions] = useState<MovieSuggestion[]>([]);
   const [watchedMovies, setWatchedMovies] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<"active" | "watched">("active");
-  const [timeLeft, setTimeLeft] = useState<{ months: number; weeks: number; days: number; hours: number; minutes: number; seconds: number; isFrozen: boolean; isOver: boolean } | null>(null);
+  const [timeLeft, setTimeLeft] = useState<{ 
+    months: number; 
+    weeks: number; 
+    days: number; 
+    hours: number; 
+    minutes: number; 
+    seconds: number; 
+    isFrozen: boolean; 
+    isOver: boolean;
+    lockdownTimeLeft?: {
+      months: number;
+      weeks: number;
+      days: number;
+      hours: number;
+      minutes: number;
+      seconds: number;
+    } | null;
+  } | null>(null);
   const [loadingActiveList, setLoadingActiveList] = useState(false);
   const frozenMovieLockRef = useRef<{ listId: string; releaseTime: string; movieId: string } | null>(null);
 
@@ -798,6 +815,63 @@ export default function App() {
     }
   };
 
+  // Helper to compute calendar and time breakdown between two timestamps
+  const calculateTimeBreakdown = (targetMs: number, fromMs: number) => {
+    if (targetMs <= fromMs) return null;
+    const nowDate = new Date(fromMs);
+
+    let tempDate = new Date(nowDate);
+    let m = 0;
+    while (true) {
+      let nextTemp = new Date(tempDate);
+      nextTemp.setMonth(nextTemp.getMonth() + 1);
+      if (nextTemp.getTime() <= targetMs) {
+        m++;
+        tempDate = nextTemp;
+      } else {
+        break;
+      }
+    }
+
+    let w = 0;
+    while (true) {
+      let nextTemp = new Date(tempDate);
+      nextTemp.setDate(nextTemp.getDate() + 7);
+      if (nextTemp.getTime() <= targetMs) {
+        w++;
+        tempDate = nextTemp;
+      } else {
+        break;
+      }
+    }
+
+    let d = 0;
+    while (true) {
+      let nextTemp = new Date(tempDate);
+      nextTemp.setDate(nextTemp.getDate() + 1);
+      if (nextTemp.getTime() <= targetMs) {
+        d++;
+        tempDate = nextTemp;
+      } else {
+        break;
+      }
+    }
+
+    const remainingMs = targetMs - tempDate.getTime();
+    const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+    const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((remainingMs % (1000 * 60)) / 1000);
+
+    return {
+      months: m,
+      weeks: w,
+      days: d,
+      hours,
+      minutes,
+      seconds
+    };
+  };
+
   // Live countdown ticker
   useEffect(() => {
     if (!activeList?.releaseTime) {
@@ -811,64 +885,37 @@ export default function App() {
       const difference = deadline - now;
 
       if (difference <= 0) {
-        setTimeLeft({ months: 0, weeks: 0, days: 0, hours: 0, minutes: 0, seconds: 0, isFrozen: true, isOver: true });
+        setTimeLeft({ 
+          months: 0, 
+          weeks: 0, 
+          days: 0, 
+          hours: 0, 
+          minutes: 0, 
+          seconds: 0, 
+          isFrozen: true, 
+          isOver: true,
+          lockdownTimeLeft: null
+        });
         triggerReleaseTransition();
       } else {
-        const nowDate = new Date(now);
+        const breakdown = calculateTimeBreakdown(deadline, now) || {
+          months: 0,
+          weeks: 0,
+          days: 0,
+          hours: 0,
+          minutes: 0,
+          seconds: 0
+        };
 
-        // Precise calendar calculation
-        let tempDate = new Date(nowDate);
-        let m = 0;
-        while (true) {
-          let nextTemp = new Date(tempDate);
-          nextTemp.setMonth(nextTemp.getMonth() + 1);
-          if (nextTemp.getTime() <= deadline) {
-            m++;
-            tempDate = nextTemp;
-          } else {
-            break;
-          }
-        }
-        
-        let w = 0;
-        while (true) {
-          let nextTemp = new Date(tempDate);
-          nextTemp.setDate(nextTemp.getDate() + 7);
-          if (nextTemp.getTime() <= deadline) {
-            w++;
-            tempDate = nextTemp;
-          } else {
-            break;
-          }
-        }
-
-        let d = 0;
-        while (true) {
-          let nextTemp = new Date(tempDate);
-          nextTemp.setDate(nextTemp.getDate() + 1);
-          if (nextTemp.getTime() <= deadline) {
-            d++;
-            tempDate = nextTemp;
-          } else {
-            break;
-          }
-        }
-
-        const remainingMs = deadline - tempDate.getTime();
-        const hours = Math.floor(remainingMs / (1000 * 60 * 60));
-        const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
-        const seconds = Math.floor((remainingMs % (1000 * 60)) / 1000);
         const isFrozen = difference <= 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+        const lockdownDeadline = deadline - 24 * 60 * 60 * 1000;
+        const lockdownTimeLeft = !isFrozen ? calculateTimeBreakdown(lockdownDeadline, now) : null;
 
         setTimeLeft({ 
-          months: m, 
-          weeks: w, 
-          days: d, 
-          hours, 
-          minutes, 
-          seconds, 
+          ...breakdown, 
           isFrozen, 
-          isOver: false 
+          isOver: false,
+          lockdownTimeLeft
         });
       }
     };
@@ -2486,69 +2533,141 @@ export default function App() {
                           </h3>
                         </div>
 
-                        {/* TIMER NUMBERS */}
-                        <div className="flex items-center gap-4 shrink-0">
-                          <div className="flex flex-wrap gap-2 justify-center">
-                            {timeLeft.months > 0 && (
-                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
-                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
-                                  {String(timeLeft.months).padStart(2, '0')}
-                                </span>
-                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Mth</span>
-                              </div>
-                            )}
-                            {timeLeft.weeks > 0 && (
-                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
-                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
-                                  {String(timeLeft.weeks).padStart(2, '0')}
-                                </span>
-                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Wk</span>
-                              </div>
-                            )}
-                            {timeLeft.days > 0 && (
-                              <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
-                                <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
-                                  {String(timeLeft.days).padStart(2, '0')}
-                                </span>
-                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Day</span>
-                              </div>
-                            )}
-                            {timeLeft.hours > 0 && (
+                        {/* TIMER NUMBERS (MOVIE NIGHT COUNTDOWN) */}
+                        <div className="flex flex-col items-center sm:items-end gap-1 shrink-0">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-amber-500/80">
+                            Movie Night In
+                          </span>
+                          <div className="flex items-center gap-4">
+                            <div className="flex flex-wrap gap-2 justify-center">
+                              {timeLeft.months > 0 && (
+                                <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                  <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                    {String(timeLeft.months).padStart(2, '0')}
+                                  </span>
+                                  <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Mth</span>
+                                </div>
+                              )}
+                              {timeLeft.weeks > 0 && (
+                                <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                  <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                    {String(timeLeft.weeks).padStart(2, '0')}
+                                  </span>
+                                  <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Wk</span>
+                                </div>
+                              )}
+                              {(timeLeft.days > 0 || timeLeft.weeks > 0 || timeLeft.months > 0) && (
+                                <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
+                                  <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
+                                    {String(timeLeft.days).padStart(2, '0')}
+                                  </span>
+                                  <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Day</span>
+                                </div>
+                              )}
                               <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
                                 <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
                                   {String(timeLeft.hours).padStart(2, '0')}
                                 </span>
                                 <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Hrs</span>
                               </div>
-                            )}
-                            {timeLeft.minutes > 0 && (
                               <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
                                 <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
                                   {String(timeLeft.minutes).padStart(2, '0')}
                                 </span>
                                 <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Min</span>
                               </div>
-                            )}
-                            {timeLeft.seconds > 0 && (
                               <div className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-center min-w-[50px] shadow-lg">
                                 <span className="block font-serif font-black text-amber-400 text-xl tracking-wider">
                                   {String(timeLeft.seconds).padStart(2, '0')}
                                 </span>
                                 <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Sec</span>
                               </div>
+                            </div>
+
+                            {isAdminOfRoom && (
+                              <button
+                                onClick={handleCancelReleaseCountdown}
+                                className="bg-zinc-950 hover:bg-zinc-900 text-amber-400 hover:text-amber-300 border border-zinc-800 font-extrabold px-3 py-2 rounded-xl text-xs transition-all shadow-md cursor-pointer"
+                              >
+                                Cancel
+                              </button>
                             )}
                           </div>
-
-                          {isAdminOfRoom && (
-                            <button
-                              onClick={handleCancelReleaseCountdown}
-                              className="bg-zinc-950 hover:bg-zinc-900 text-amber-400 hover:text-amber-300 border border-zinc-800 font-extrabold px-3 py-2 rounded-xl text-xs transition-all shadow-md"
-                            >
-                              Cancel
-                            </button>
-                          )}
                         </div>
                       </div>
+
+                      {/* COUNTDOWN TO LOCKDOWN (Only visible before 24-hour lockdown window, disappears upon lockdown) */}
+                      {!timeLeft.isFrozen && timeLeft.lockdownTimeLeft && (
+                        <div className="mt-5 pt-4 border-t border-zinc-800/80 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-950/60 rounded-xl p-3.5 border border-amber-500/20 shadow-inner relative z-10">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+                              <Lock className="w-4 h-4 text-amber-400" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                                  Countdown to Lockdown
+                                </span>
+                                <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-500/30">
+                                  24h Window
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-zinc-400 mt-0.5">
+                                Voting on the #1 choice locks at{" "}
+                                <strong className="text-zinc-200 font-semibold">
+                                  {new Date(new Date(activeList.releaseTime).getTime() - 24 * 60 * 60 * 1000).toLocaleString()}
+                                </strong>
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Mini digital counter boxes for lockdown */}
+                          <div className="flex items-center gap-1.5 shrink-0 self-start md:self-auto">
+                            {timeLeft.lockdownTimeLeft.months > 0 && (
+                              <div className="bg-zinc-900/90 border border-zinc-750 rounded-lg px-2.5 py-1 text-center min-w-[44px] shadow">
+                                <span className="block font-serif font-black text-amber-400 text-sm leading-tight">
+                                  {String(timeLeft.lockdownTimeLeft.months).padStart(2, '0')}
+                                </span>
+                                <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider">Mth</span>
+                              </div>
+                            )}
+                            {timeLeft.lockdownTimeLeft.weeks > 0 && (
+                              <div className="bg-zinc-900/90 border border-zinc-750 rounded-lg px-2.5 py-1 text-center min-w-[44px] shadow">
+                                <span className="block font-serif font-black text-amber-400 text-sm leading-tight">
+                                  {String(timeLeft.lockdownTimeLeft.weeks).padStart(2, '0')}
+                                </span>
+                                <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider">Wk</span>
+                              </div>
+                            )}
+                            {(timeLeft.lockdownTimeLeft.days > 0 || timeLeft.lockdownTimeLeft.weeks > 0 || timeLeft.lockdownTimeLeft.months > 0) && (
+                              <div className="bg-zinc-900/90 border border-zinc-750 rounded-lg px-2.5 py-1 text-center min-w-[44px] shadow">
+                                <span className="block font-serif font-black text-amber-400 text-sm leading-tight">
+                                  {String(timeLeft.lockdownTimeLeft.days).padStart(2, '0')}
+                                </span>
+                                <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider">Day</span>
+                              </div>
+                            )}
+                            <div className="bg-zinc-900/90 border border-zinc-750 rounded-lg px-2.5 py-1 text-center min-w-[44px] shadow">
+                              <span className="block font-serif font-black text-amber-400 text-sm leading-tight">
+                                {String(timeLeft.lockdownTimeLeft.hours).padStart(2, '0')}
+                              </span>
+                              <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider">Hrs</span>
+                            </div>
+                            <div className="bg-zinc-900/90 border border-zinc-750 rounded-lg px-2.5 py-1 text-center min-w-[44px] shadow">
+                              <span className="block font-serif font-black text-amber-400 text-sm leading-tight">
+                                {String(timeLeft.lockdownTimeLeft.minutes).padStart(2, '0')}
+                              </span>
+                              <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider">Min</span>
+                            </div>
+                            <div className="bg-zinc-900/90 border border-zinc-750 rounded-lg px-2.5 py-1 text-center min-w-[44px] shadow">
+                              <span className="block font-serif font-black text-amber-400 text-sm leading-tight">
+                                {String(timeLeft.lockdownTimeLeft.seconds).padStart(2, '0')}
+                              </span>
+                              <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider">Sec</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
